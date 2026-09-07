@@ -451,6 +451,221 @@ def Animate_Fringes(wigner_PMS,  x_array, p_array, bar_limits, array_tick, n_fra
         ani.save(filename=save,writer="pillow")
     return
 
+def Plot_Wigner_GCS_Fringes(W_c, W_q, x_array, p_array, array_tick, title, save):
+    """Side-by-side plot of the classical W_c and quantum-interference W_q Wigner functions.
+
+    W_c = W_+ + W_-  (sum of diagonal branches, always ≥ 0  → Blues colormap)
+    W_q = 2 Re[W^off] (quantum fringes, can be negative       → RdBu colormap)
+
+    Parameters
+    ----------
+    W_c, W_q   : (steps, steps) real arrays
+    x_array, p_array : 1-D coordinate arrays
+    array_tick : tick positions (shared for both axes)
+    title      : suptitle string (False / '' to omit)
+    save       : filepath string to save, or False
+
+    Returns
+    -------
+    fig, im_c, im_q
+    """
+    rcParams['mathtext.fontset'] = 'cm'
+    rcParams['font.family'] = 'STIXGeneral'
+
+    fig, axes = plt.subplots(1, 2, figsize=(6.5, 3.3), dpi=350)
+    fig.subplots_adjust(wspace=0.08)
+
+    aspect = len(x_array) / len(p_array)
+    extent = [np.min(x_array), np.max(x_array),
+              np.min(p_array) * len(p_array) / len(x_array),
+              np.max(p_array) * len(p_array) / len(x_array)]
+
+    lim          = np.max(np.abs(x_array))
+    lim_p        = lim * len(p_array) / len(x_array)
+    lables_tick  = format_latex_numbers(array_tick)
+
+    bar_c = float(np.max(W_c)) if np.max(W_c) > 0 else 1.0
+    bar_q = float(np.max(np.abs(W_q))) if np.max(np.abs(W_q)) > 0 else 1.0
+
+    im_c = axes[0].imshow(W_c, cmap='Blues', interpolation='bilinear',
+                          origin='lower', vmin=0, vmax=bar_c,
+                          aspect=aspect, extent=extent)
+
+    im_q = axes[1].imshow(W_q, cmap='RdBu', interpolation='bilinear',
+                          origin='lower', vmin=-bar_q, vmax=bar_q,
+                          aspect=aspect, extent=extent)
+
+    for i, (ax, im, lbl) in enumerate([(axes[0], im_c, r'$\mathcal{W}_c$'),
+                                        (axes[1], im_q, r'$\mathcal{W}_q$')]):
+        ax.axvline(x=0, color='black', linewidth=0.5, alpha=0.4)
+        ax.axhline(y=0, color='black', linewidth=0.5, alpha=0.4)
+        ax.set_xlim(-lim, lim)
+        ax.set_ylim(-lim_p, lim_p)
+        ax.set_xticks(array_tick)
+        ax.set_xticklabels(lables_tick)
+        ax.set_yticks(array_tick)
+        ax.set_xlabel(r'Position, $x$', labelpad=2, fontsize=11)
+        ax.set_title(lbl, fontsize=13)
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.5)
+
+    axes[0].set_ylabel(r'Momentum, $p$', labelpad=2, fontsize=11)
+    axes[0].set_yticklabels(lables_tick)
+    axes[1].set_yticklabels([])
+
+    cbar_c = fig.colorbar(im_c, ax=axes[0], fraction=0.046, pad=0.03, orientation='vertical')
+    cbar_c.set_ticks([0, bar_c])
+    cbar_c.set_ticklabels([r'$0$', f'{bar_c:.2f}'], fontsize=8)
+    cbar_c.set_label(r'$\mathcal{W}_c$', fontsize=9, labelpad=4, rotation=-90)
+
+    cbar_q = fig.colorbar(im_q, ax=axes[1], fraction=0.046, pad=0.03, orientation='vertical')
+    cbar_q.set_ticks([-bar_q, 0, bar_q])
+    cbar_q.set_ticklabels([f'{-bar_q:.2f}', r'$0$', f'{bar_q:.2f}'], fontsize=8)
+    cbar_q.set_label(r'$\mathcal{W}_q$', fontsize=9, labelpad=4, rotation=-90)
+
+    if title:
+        fig.suptitle(title, fontsize=12, y=1.01)
+
+    if save:
+        plt.savefig(save, bbox_inches='tight', transparent=True)
+
+    return fig, im_c, im_q
+
+
+def Animate_GCS_Fringes(W_c_t, W_q_t, x_array, p_array, array_tick, n_frames, title, save):
+    """Animate W_c and W_q side by side over time.
+
+    Color limits are fixed to the global extrema across all frames so the
+    fringes are comparable between time steps.
+
+    Parameters
+    ----------
+    W_c_t, W_q_t : (T, steps, steps) real arrays
+    x_array, p_array : 1-D coordinate arrays
+    array_tick   : tick positions
+    n_frames     : int — number of animation frames
+    title        : suptitle string (False / '' to omit)
+    save         : filepath to save .gif, or False
+
+    Returns
+    -------
+    ani : FuncAnimation
+    """
+    bar_c = float(np.max(W_c_t)) if np.max(W_c_t) > 0 else 1.0
+    bar_q = float(np.max(np.abs(W_q_t))) if np.max(np.abs(W_q_t)) > 0 else 1.0
+
+    fig, im_c, im_q = Plot_Wigner_GCS_Fringes(
+        W_c_t[0], W_q_t[0], x_array, p_array, array_tick, title, False)
+
+    im_c.set_clim(vmin=0, vmax=bar_c)
+    im_q.set_clim(vmin=-bar_q, vmax=bar_q)
+
+    def update(frame):
+        im_c.set_array(W_c_t[frame])
+        im_q.set_array(W_q_t[frame])
+        return [im_c, im_q]
+
+    ani = animation.FuncAnimation(fig, update, frames=n_frames, interval=50)
+    if save:
+        ani.save(filename=save, writer='pillow')
+    return ani
+
+
+def Plot_Wigner_GCS_Total(W_total, x_array, p_array, array_tick, title, save):
+    """Plot the full GCS Wigner function W_total = W_c + W_q.
+
+    Uses a diverging RdBu colormap symmetric around zero so negative (quantum)
+    regions are immediately visible.
+
+    Parameters
+    ----------
+    W_total    : (steps, steps) real array — W_c + W_q
+    x_array, p_array : 1-D coordinate arrays
+    array_tick : tick positions
+    title      : axes title string (False / '' to omit)
+    save       : filepath to save, or False
+
+    Returns
+    -------
+    fig, im
+    """
+    rcParams['mathtext.fontset'] = 'cm'
+    rcParams['font.family'] = 'STIXGeneral'
+
+    fig, ax = plt.subplots(1, 1, figsize=(3.5, 3.5), dpi=300)
+    fig.set_tight_layout(True)
+
+    lables_tick = format_latex_numbers(array_tick)
+    lim   = np.max(np.abs(x_array))
+    lim_p = lim * len(p_array) / len(x_array)
+    bar   = float(np.max(np.abs(W_total))) if np.max(np.abs(W_total)) > 0 else 1.0
+
+    ax.axvline(x=0, color='black', linewidth=0.5, alpha=0.4)
+    ax.axhline(y=0, color='black', linewidth=0.5, alpha=0.4)
+    ax.set_ylabel(r'Momentum, $p$', labelpad=2, fontsize=11)
+    ax.set_xlabel(r'Position, $x$', labelpad=2, fontsize=11)
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim_p, lim_p)
+    ax.set_xticks(array_tick)
+    ax.set_xticklabels(lables_tick)
+    ax.set_yticks(array_tick)
+    ax.set_yticklabels(lables_tick)
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.5)
+
+    extent = [np.min(x_array), np.max(x_array),
+              np.min(p_array) * len(p_array) / len(x_array),
+              np.max(p_array) * len(p_array) / len(x_array)]
+
+    im = ax.imshow(W_total, cmap='RdBu', interpolation='bilinear',
+                   origin='lower', vmin=-bar, vmax=bar,
+                   aspect=len(x_array) / len(p_array), extent=extent)
+
+    cbar = fig.colorbar(im, fraction=0.046, pad=0.04, orientation='vertical')
+    cbar.set_ticks([-bar, 0, bar])
+    cbar.set_ticklabels([f'{-bar:.2f}', r'$0$', f'{bar:.2f}'], fontsize=8)
+    cbar.set_label(r'$\mathcal{W}(\tilde{r})$', fontsize=10, labelpad=4, rotation=-90)
+
+    if title:
+        ax.set_title(title, fontsize=13)
+    if save:
+        plt.savefig(save, bbox_inches='tight', transparent=True)
+    return fig, im
+
+
+def Animate_GCS_Total(W_total_t, x_array, p_array, array_tick, n_frames, title, save):
+    """Animate W_total = W_c + W_q over time.
+
+    Color limits are fixed to the global extremum across all frames.
+
+    Parameters
+    ----------
+    W_total_t  : (T, steps, steps) real array
+    x_array, p_array : 1-D coordinate arrays
+    array_tick : tick positions
+    n_frames   : int
+    title      : figure title string (False / '' to omit)
+    save       : filepath to save .gif, or False
+
+    Returns
+    -------
+    ani : FuncAnimation
+    """
+    bar = float(np.max(np.abs(W_total_t))) if np.max(np.abs(W_total_t)) > 0 else 1.0
+
+    fig, im = Plot_Wigner_GCS_Total(W_total_t[0], x_array, p_array, array_tick, title, False)
+    im.set_clim(vmin=-bar, vmax=bar)
+
+    def update(frame):
+        im.set_array(W_total_t[frame])
+        return [im]
+
+    ani = animation.FuncAnimation(fig, update, frames=n_frames, interval=50)
+    if save:
+        ani.save(filename=save, writer='pillow')
+    return ani
+
+
 def generate_pi_ticks(maximum, step):
     # Generate numerical array
     x_vals = np.arange(0, (maximum + 1) * step * np.pi, step * np.pi)
@@ -1083,19 +1298,20 @@ def Draw_Ellipsoids(ax, r_JK_t, sigma_JK_t, t_idx, z_comp, color_map=None, alpha
     for (j, k), label, role in _INDEX_MAP_3D:
         color = color_map[role]
         vec   = r_JK_t[t_idx, j, k, :, 0]
-        sig   = sigma_JK_t[t_idx, j, k]
+        # For off* (1,0) read the conjugate source (0,1) so Im has a consistent sign;
+        # take abs() because a semi-axis is a length, not a signed quantity.
+        sig_src = sigma_JK_t[t_idx, 0, 1] if role == 'off*' else sigma_JK_t[t_idx, j, k]
 
         cx = vec[0].real
         cy = vec[1].real
         cz = vec[z_comp].imag
 
-        s00 = sig[0, 0]
-        s11 = sig[1, 1]
+        s00 = sig_src[0, 0]
+        s11 = sig_src[1, 1]
 
         ax_x = _safe_sqrt_3d(s00.real, f"Re[sigma_00] ({role})")
         ax_y = _safe_sqrt_3d(s11.real, f"Re[sigma_11] ({role})")
-        ax_z = _safe_sqrt_3d(s00.imag if z_comp == 0 else s11.imag,
-                             f"Im[sigma_{'00' if z_comp==0 else '11'}] ({role})")
+        ax_z = np.sqrt(abs(s00.imag if z_comp == 0 else s11.imag))
 
         _draw_ellipsoid_3d(ax, cx, cy, cz, ax_x, ax_y, ax_z, color,
                            surf_alpha=0.18*alpha, line_alpha=0.25*alpha)
@@ -1144,7 +1360,8 @@ def Plot_Trajectories_Single(r_JK_t, z_comp=0,
                              legend_handles=None,
                              color_map=None,
                              sym_lim=None,
-                             figsize=(10, 10), elev=22, azim=-55):
+                             figsize=(10, 10), elev=22, azim=-55,
+                             save=False):
     """One-call wrapper: trajectories in a single 3-D panel.
 
     Parameters
@@ -1168,6 +1385,8 @@ def Plot_Trajectories_Single(r_JK_t, z_comp=0,
     Draw_Curves(ax, r_JK_t, z_comp, color_map=color_map)
     _finalise_3d(ax, fig, sym_lim, z_comp,
                  title=title, legend_handles=legend_handles)
+    if save:
+        plt.savefig(save, bbox_inches='tight')
     return fig, ax
 
 
@@ -1176,7 +1395,8 @@ def Plot_Vectors_Single(r_JK_t, t_idx, z_comp=0,
                         legend_handles=None,
                         color_map=None,
                         sym_lim=None,
-                        figsize=(10, 10), elev=22, azim=-55):
+                        figsize=(10, 10), elev=22, azim=-55,
+                        save=False):
     """One-call wrapper: snapshot vectors in a single 3-D panel.
 
     Parameters
@@ -1201,6 +1421,8 @@ def Plot_Vectors_Single(r_JK_t, t_idx, z_comp=0,
     Draw_Vectors(ax, r_JK_t, t_idx, z_comp, color_map=color_map)
     _finalise_3d(ax, fig, sym_lim, z_comp,
                  title=title, legend_handles=legend_handles)
+    if save:
+        plt.savefig(save, bbox_inches='tight')
     return fig, ax
 
 
@@ -1209,7 +1431,8 @@ def Plot_Vectors_Ellipsoids_Single(r_JK_t, sigma_JK_t, t_idx, z_comp=0,
                                    legend_handles=None,
                                    color_map=None,
                                    sym_lim=None,
-                                   figsize=(10, 10), elev=22, azim=-55):
+                                   figsize=(10, 10), elev=22, azim=-55,
+                                   save=False):
     """One-call wrapper: vectors + uncertainty ellipsoids in a single 3-D panel.
 
     Parameters
@@ -1236,6 +1459,8 @@ def Plot_Vectors_Ellipsoids_Single(r_JK_t, sigma_JK_t, t_idx, z_comp=0,
     Draw_Ellipsoids(ax, r_JK_t, sigma_JK_t, t_idx, z_comp, color_map=color_map)
     _finalise_3d(ax, fig, sym_lim, z_comp,
                  title=title, legend_handles=legend_handles)
+    if save:
+        plt.savefig(save, bbox_inches='tight')
     return fig, ax
 
 
@@ -1245,7 +1470,8 @@ def Plot_Vectors_Ellipsoids_Multi_Time(r_JK_t, sigma_JK_t, t_idx_array, alpha_ar
                                        legend_handles=None,
                                        color_map=None,
                                        sym_lim=None,
-                                       figsize=(10, 10), elev=22, azim=-55):
+                                       figsize=(10, 10), elev=22, azim=-55,
+                                       save=False):
     """Static 3-D plot: vectors + ellipsoids at multiple time snapshots.
 
     Colors are fixed per branch; opacity encodes time via alpha_array, letting
@@ -1290,13 +1516,15 @@ def Plot_Vectors_Ellipsoids_Multi_Time(r_JK_t, sigma_JK_t, t_idx_array, alpha_ar
 
     _finalise_3d(ax, fig, sym_lim, z_comp,
                  title=title, legend_handles=legend_handles)
+    if save:
+        plt.savefig(save, bbox_inches='tight')
     return fig, ax
 
 
 def Plot_Diagonal_Multi_Time_2D(r_JK_t, sigma_JK_t, t_idx_array, alpha_array,
                                  color_map=None, sym_lim=None,
                                  title="On-diagonal first moments",
-                                 figsize=(6, 6)):
+                                 figsize=(6, 6), save=False):
     """2-D phase-space plot of on-diagonal first moments at multiple times.
 
     Draws one arrow (origin → (Re[x], Re[p])) and one uncertainty ellipse
@@ -1395,6 +1623,8 @@ def Plot_Diagonal_Multi_Time_2D(r_JK_t, sigma_JK_t, t_idx_array, alpha_array,
     if title:
         ax.set_title(title, fontsize=13)
     fig.tight_layout()
+    if save:
+        plt.savefig(save, bbox_inches='tight')
     return fig, ax
 
 
@@ -1402,7 +1632,8 @@ def Plot_Phase_Space_Summary(r_JK_t, sigma_JK_t, t_idx_array, alpha_array,
                               color_map=None,
                               sym_lim_2d=None, sym_lim_3d=None,
                               title="",
-                              figsize=(18, 6), elev=22, azim=-55):
+                              figsize=(18, 6), elev=22, azim=-55,
+                              save=False):
     """Three-panel static phase-space figure.
 
     Panel 1 — 2-D Re[x]–Re[p]: on-diagonal arrows + ellipses (same as
@@ -1528,4 +1759,69 @@ def Plot_Phase_Space_Summary(r_JK_t, sigma_JK_t, t_idx_array, alpha_array,
         fig.suptitle(title, fontsize=14)
 
     fig.subplots_adjust(wspace=0.05)
+    if save:
+        plt.savefig(save, bbox_inches='tight')
     return fig, (ax1, ax2, ax3)
+
+
+def Animate_Vectors_Single(r_JK_t, z_comp=0,
+                           title="First moments",
+                           legend_handles=None,
+                           color_map=None,
+                           sym_lim=None,
+                           figsize=(10, 10), elev=22, azim=-55,
+                           n_frames=None, interval=50, save=False):
+    if sym_lim is None:
+        sym_lim = Sym_Lim_From_Data(r_JK_t)
+    if n_frames is None:
+        n_frames = r_JK_t.shape[0]
+
+    fig, ax = Plot_Vectors_Single(r_JK_t, 0, z_comp=z_comp, title=title,
+                                  legend_handles=legend_handles,
+                                  color_map=color_map, sym_lim=sym_lim,
+                                  figsize=figsize, elev=elev, azim=azim)
+
+    def update(frame):
+        ax.clear()
+        Draw_XY_Plane(ax, sym_lim)
+        Draw_Vectors(ax, r_JK_t, frame, z_comp, color_map=color_map)
+        _finalise_3d(ax, fig, sym_lim, z_comp,
+                     title=title, legend_handles=[])
+        return [ax]
+
+    ani = animation.FuncAnimation(fig, update, frames=n_frames, interval=interval)
+    if save:
+        ani.save(filename=save, writer="pillow")
+    return ani
+
+
+def Animate_Vectors_Ellipsoids_Single(r_JK_t, sigma_JK_t, z_comp=0,
+                                      title="First moments with uncertainty",
+                                      legend_handles=None,
+                                      color_map=None,
+                                      sym_lim=None,
+                                      figsize=(10, 10), elev=22, azim=-55,
+                                      n_frames=None, interval=50, save=False):
+    if sym_lim is None:
+        sym_lim = Sym_Lim_From_Data(r_JK_t)
+    if n_frames is None:
+        n_frames = r_JK_t.shape[0]
+
+    fig, ax = Plot_Vectors_Ellipsoids_Single(
+        r_JK_t, sigma_JK_t, 0, z_comp=z_comp, title=title,
+        legend_handles=legend_handles, color_map=color_map,
+        sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim)
+
+    def update(frame):
+        ax.clear()
+        Draw_XY_Plane(ax, sym_lim)
+        Draw_Vectors(ax, r_JK_t, frame, z_comp, color_map=color_map)
+        Draw_Ellipsoids(ax, r_JK_t, sigma_JK_t, frame, z_comp, color_map=color_map)
+        _finalise_3d(ax, fig, sym_lim, z_comp,
+                     title=title, legend_handles=[])
+        return [ax]
+
+    ani = animation.FuncAnimation(fig, update, frames=n_frames, interval=interval)
+    if save:
+        ani.save(filename=save, writer="pillow")
+    return ani

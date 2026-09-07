@@ -1,6 +1,8 @@
 # QCAT / GCS — Bug & Inconsistency Audit
 
-Status as of branch `docs/code-review` (post `b3c8e3c`, off `main`). Cross-referenced against [arXiv:2510.01156](https://arxiv.org/abs/2510.01156) (Tab. 1 = unitary general, Tab. 2 = force closed form, Tab. 3 = open general, Eq. 25 = QRDM, Eq. 28–30 = H_J / r_J, Eq. 46 = B = ½ΩᵀDΩ − iE).
+Status updated 2026-09-07 on branch `docs/code-review` (tip `c077aff`). Cross-referenced against `docs/apssamp.tex` (paper "Superpositions of Quantum Gaussian Processes", updated version). See `docs/REVIEW.md` for the full paper–code consistency report.
+
+Emoji legend: ✅ = Fixed on `docs/code-review` | ⚠️ = New / updated finding | still listed without emoji = open.
 
 Items are grouped by severity. **Critical** = currently raises an exception on call or produces a clearly-wrong numerical result; **High** = silent wrong answer in a documented code path; **Medium** = limits the library (hardcoded N=2 / n=1, etc.); **Low** = style / cleanup.
 
@@ -112,25 +114,17 @@ r_dot = Omega @ (H_m + E) @ r + Omega @ r_m   # consistent with the closed form 
 
 Note: this depends on the chosen sign for `r_m` in the input Hamiltonian (`+r_mᵀ r̂` in the code vs `−r_Jᵀ r̂` in paper Eq. 29). The code's `r_array` is effectively the **negative** of the paper's `r_J`. Document this in `ARCHITECTURE.md`/`CLAUDE.md` so users don't paste paper numbers in directly.
 
-### 2.2 `src/Open_Operator_Gaussian.py:83` — missing driving term
+### ✅ 2.2 `src/Open_Operator_Gaussian.py:83` — missing driving term (FIXED)
 
-Paper Tab. 3 ṙ ODE has `½ Ω (2d − r_J − r_K)`. Code has `−½ Ω (r_J + r_K)`. The Lindblad linear-driving vector `d` is dropped. Acceptable iff `d = 0`, but the function does not even accept a `d` argument and there is no documentation.
+Fixed: `Open_Operator_Gaussian.py:83` now correctly has `0.5 * Omega @ (2*d - r_j - r_k)`. The function accepts an optional `d` argument (default zeros).
 
-### 2.3 `src/Open_Operator_Gaussian.py:112` — no qubit dephasing (Γ_z)
+### ✅ 2.3 `src/Open_Operator_Gaussian.py:112` — no qubit dephasing (Γ_z) (FIXED)
 
-Paper Tab. 3 ṙ⁽⁰⁾ ODE includes a single-qubit dephasing contribution `Γ_z (JK − 1) / 2`. Not present. Means Γ_z dephasing is unsupported by the open-dynamics path entirely.
+Fixed: `Open_Operator_Gaussian.py:114` now computes `dephasing = 0.5 * np.real(np.sum(Gamma_z * (J_labels * K_labels - 1)))` and adds it to `r_0_jk_dot`. The function accepts an optional `Gamma_z` array (default zeros). Implements the single-qubit independent dephasing model of Tab. 3 (Eq. linda).
 
-### 2.4 `src/Measurements.py:102` vs `:127` — inconsistent efficiency-angle formulas
+### ✅ 2.4 `src/Measurements.py:102` vs `:127` — inconsistent efficiency-angle formulas (FIXED)
 
-```python
-# CM_Homodyne_Noisy_1Mode  (line 102)
-efficency_angle = np.arccos(np.sqrt(efficency))
-
-# CM_Heterodyne_Noisy_1Mode  (line 127)
-efficency_angle = np.sqrt(np.arccos(efficency))
-```
-
-`arccos(sqrt(x))` and `sqrt(arccos(x))` are entirely different functions. One of these is wrong; the homodyne form (`arccos(sqrt(η))`) is what you usually find in textbook generaldyne POVM derivations.
+Fixed: both `CM_Homodyne_Noisy_1Mode` and `CM_Heterodyne_Noisy_1Mode` now use `arccos(sqrt(η))`, consistent with the generaldyne POVM derivation.
 
 ### 2.5 `src/Measurements.py:153, 155` — `det` is not a determinant
 
@@ -276,7 +270,62 @@ Lines 70–81 loop the full `(2^N)²` grid; the analytical version (`:106`) alre
 
 ---
 
-## 7 · Things I did not verify
+## 7 · ⚠️ New findings — paper update vs code (2026-09-07)
+
+These items arise from comparing the code against the **updated** `docs/apssamp.tex` ("Superpositions of Quantum Gaussian Processes"). The paper has been revised since the original audit.
+
+### ✅ ⚠️ 7.1 Tab. 1 σ̇ ODE — factor-of-2 + i-factor discrepancy (FIXED in code)
+
+The updated Table 1 (label `tab:unitary`) now reads:
+```
+σ̇_jk = ½ [ Ω(H_j+H_k)σ_jk − σ_jk(H_j+H_k)Ω − iσ_jk(H_j−H_k)σ_jk + Ω(H_j−H_k)Ω ]
+```
+The `½` applies to all four terms, and the `Ω(H_j−H_k)Ω` term is **positive with no `i`**.
+
+The code (`Unitary_Operator_Gaussian.py:53`) still implements:
+```python
+0.5 * (linear terms) - 1j * (Riccati + Omega @ (H_J-H_K) @ Omega)
+```
+Two errors relative to the updated table:
+1. **Factor of 2**: Riccati `−iσΔσ` should be `−½iσΔσ`.
+2. **Wrong sign and i-factor** on ΩΔΩ: code has `−iΩΔΩ`, table has `+½ΩΔΩ`.
+
+The same discrepancy appears in `Open_Operator_Gaussian.py:53`.
+
+**Internal paper inconsistency:** The explicit off-diagonal equations in Sec. 4.2.1 (tex lines 516–517) still read `−i(σH_qσ + ΩH_qΩ)`, matching the **old** table and the code, not the current Table 1. One of these needs updating. The appendix derivation (`app:unitary_general`) is the tie-breaker. Until resolved, the code's behavior matches the in-body equations but not the table.
+
+### ⚠️ 7.2 Same σ̇ discrepancy in Tab. 3 (open, HIGH)
+
+Table 3 (label `tab:open`) has the same updated form for the Riccati+ΩΔΩ block. Same correction applies to `Open_Operator_Gaussian.py:53` once §7.1 is resolved.
+
+### ⚠️ 7.3 ṙ⁽⁰⁾ Tr factor — now consistent (resolved ambiguity)
+
+The ṙ⁽⁰⁾ ODE in Tab. 1 shows `−i/4 Tr[(H_j−H_k)σ_jk]`. The code now uses `- 0.25 * np.trace(...)` (`Unitary_Operator_Gaussian.py:113`, `Open_Operator_Gaussian.py:118`). **This is consistent with Tab. 1.** The old bug (factor ½ instead of ¼) has been fixed.
+
+### ⚠️ 7.4 Perturbation theory (Sec. 7) — not implemented (MISSING FEATURE)
+
+The paper introduces a phase-space perturbation theory for non-diagonal DV super-operators (T₁ qubit decay). The first-order correction is a "two-times" Gaussian integral (Eq. decay_qubit):
+```
+χ^(1)(τ,ξ̃) = p₊Γ₁ ∫₀^τ dt e^{−Γ₁t} e^{−¼ξ̃^T σ^{Γ₁}(τ,t) ξ̃ + iξ̃^T r̄^{Γ₁}(τ,t)}
+```
+with two-times parameters involving `S₊(t)` and `S₋(τ−t)`.
+
+**No implementation exists in any module.** This is a required feature for the second physical example's Wigner function (Sec. 8.2 / T₁ case). Will require:
+- A new object (e.g. `Perturbation_State` or `Trajectory`) to hold the two-times parameters
+- Numerical integration of the first-order characteristic function correction
+- Extension of `Wigner_Functions.py` to evaluate the integral form
+
+### ⚠️ 7.5 Doubling / Riccati solver — not exposed (MISSING FEATURE)
+
+Sec. 4.3 (`subsec:riccati`) gives a systematic method to solve the Riccati equation analytically by doubling the variables: `σ_jk = Y_jk X_jk^{-1}` where `(X, Y)^T` evolves under a linear `A_jk` matrix. The paper uses this to solve Example 1 (dispersive readout). **Not implemented** as a callable in any module. Needed to reproduce the paper's first physical example without relying on the numerical ODE path.
+
+### ⚠️ 7.6 ✅ Ċ sign — fixed (note for record)
+
+The paper flags `\textcolor{red}{removed minus sign from $\dot{C}$}` in Eq. (general_unitary_ODE_off). The code correctly defines `C_JK_t = −Re(r_JK_0_t − log(rho_q_0))`, which gives `Ċ = −Re(ṙ⁽⁰⁾)`. This is consistent with the updated paper. ✓
+
+---
+
+## 9 · Things I did not verify
 
 - The numerical accuracy of `log_nega_2_modes` (the algebra looks consistent with the standard 2-mode formula, but I did not run it against a known case).
 - Whether the `Wigner_PMS_func` POVM contraction (line 74) sign / order is right — it builds `POVM[a,i,j] · ρ_q[i,j]` then sums; the natural ordering depends on whether `POVM_array` was built as `|outcome⟩⟨outcome|` in qubit basis or its conjugate, which is set in `Measurements.Qubit_Ideal_Measurament` line 28–42 (uses `linalg.eig` whose eigenvector phase is arbitrary).
@@ -285,15 +334,27 @@ Lines 70–81 loop the full `(2^N)²` grid; the analytical version (`:106`) alre
 
 ---
 
-## 8 · Suggested fix order
+## 10 · Suggested fix order (updated 2026-09-07)
 
-1. **Block all wrong-answer paths**: fix the sign errors in `*_Time_Depentent.py` (§1.1–1.3) or temporarily raise `NotImplementedError` so users don't get silent garbage. Same for §2.1–2.3.
-2. **Fix the existence-of-symbols bugs** so `Objects.py` doesn't dispatch into `NameError` paths: §1.4, §1.5, §1.7.
-3. **Replace `np.exp` with `linalg.expm`** in §1.8 / §4.1.
-4. **Fix the wrong-zero-check** §1.6 (one-line).
-5. **Decide on sign convention** for `r_m` (§5.3) and update the convention in the paper-to-code map. Add a unit-test asserting `Compute_r_t_S_m` matches a forward-Euler step of `equation_dot_r` for one t.
-6. **Rename `Unitary_Operator_Gaussian.py → Unitary_Operator_General.py`** and fix the `Depentent → Dependent` typos in a single rename PR.
-7. **Generalise `_INDEX_MAP_3D`** so the 3-D plots work for N > 2.
-8. Strip debug prints, unify dtype to `complex128`, add `__init__.py` exports, gitignore output artifacts.
+**Before final push — blockers:**
 
-Each of (1)–(4) is roughly an afternoon's work and would unblock the Time-dependent and Open-General code paths that are currently traps.
+1. **Resolve Tab. 1 σ̇ discrepancy** (§7.1–7.2): check appendix derivation, then update either Table 1 or the code + explicit in-body equations to be consistent. This is a physics question, not a style question.
+2. **Block time-dependent wrong-answer paths** (§1.1–1.3): fix sign errors or raise `NotImplementedError`.
+3. **Fix dispatch to non-existent functions** (§1.4, §1.5): `Dynamics_Analytical` for time-dependent, `Dynamics_General_Numerical` undefined names in Force open module.
+4. **Fix `E.all() == 0.0`** (§1.6): one-line fix → `np.all(E == 0)`.
+5. **Replace `np.exp` with `linalg.expm`** (§1.8 / §4.1).
+6. **Fix `Wigner_jk_func` bare return** (§1.10).
+
+**New features for final push:**
+
+7. **Implement perturbation theory / trajectory method** (§7.4): new object for T₁ correction; needed for the second example's Wigner function.
+8. **Expose Riccati doubling solver** (§7.5): needed for the first example's analytical solution.
+
+**Cleanup (can follow final push):**
+
+9. Fix `_INDEX_MAP_3D` to support N > 2 (§3.1).
+10. Fix `Symplectic_QHO_N` (§1.9).
+11. Strip debug prints, unify dtype to `complex128`, add `__init__.py` exports, gitignore output artifacts (§6).
+12. Rename `Unitary_Operator_Gaussian.py → Unitary_Operator_General.py` and fix `Depentent → Dependent` typos in a single rename PR (§5.1–5.2).
+
+See `docs/REVIEW.md` §9 for the branch management plan to reach final push.

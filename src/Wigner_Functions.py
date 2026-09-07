@@ -12,14 +12,14 @@ import Gaussian as Gaussian
 
 def Create_XX_PP(GCS, sigma_para, steps):
 
-    if len(np.shape(GCS.r_JK_t)) > 4:
-        max_x = np.max(np.real(GCS.r_JK_t[:,:,:,0,0] + sigma_para*GCS.sigma_JK_t[:,:,:,0,0]))
-        max_p = np.max(np.real(GCS.r_JK_t[:,:,:,1,0] + sigma_para*GCS.sigma_JK_t[:,:,:,1,1]))
-        max_max = int(np.max(np.array([max_x, max_p])))+1
-    else:
+    if hasattr(GCS, 'r_t') and isinstance(GCS.r_t, np.ndarray):
         max_x = np.max(np.real(GCS.r_t[:,0] + sigma_para*GCS.sigma_t[:,0,0]))
         max_p = np.max(np.real(GCS.r_t[:,1] + sigma_para*GCS.sigma_t[:,1,1]))
         max_max = int(np.max(np.array([max_x, max_p])))+3
+    else:
+        max_x = np.max(np.real(GCS.r_JK_t[:,:,:,0,0] + sigma_para*GCS.sigma_JK_t[:,:,:,0,0]))
+        max_p = np.max(np.real(GCS.r_JK_t[:,:,:,1,0] + sigma_para*GCS.sigma_JK_t[:,:,:,1,1]))
+        max_max = int(np.max(np.array([max_x, max_p])))+1
 
     x_array = np.linspace(-max_max, max_max, steps)
     p_array = np.linspace(-max_max, max_max, steps)
@@ -160,6 +160,54 @@ def Wigner_t_Gauss(GCS, r_tilde_array):
 
     return W_t_Gausss
 
+
+
+def Wigner_Off_Diagonal(GCS, time_index, r_tilde_array):
+    """
+    Computes the quantum-interference Wigner function W_q = 2 Re[sum_{j<k} rho_q[j,k] G_{jk}(r)].
+
+    G_{jk} is the complex Gaussian kernel built from the off-diagonal branch parameters
+    (sigma_JK[j,k], r_JK[j,k]).  Taking 2 Re of the sum exploits Hermitian-conjugate symmetry
+    (sigma_KJ = conj(sigma_JK), r_KJ = conj(r_JK)) so every off-diagonal pair is counted once.
+
+    Parameters
+    ----------
+    GCS           : Quantum_State — must have sigma_JK_t, r_JK_t, rho_q_t populated.
+    time_index    : int
+    r_tilde_array : (steps, steps, 2n, 1) — real phase-space grid
+
+    Returns
+    -------
+    W_q : (steps, steps) real array
+    """
+    sigma_JK = GCS.sigma_JK_t[time_index]
+    r_JK     = GCS.r_JK_t[time_index]
+    rho_q    = GCS.rho_q_t[time_index]
+    N_qubits = GCS.N_qubits
+    n_modes  = GCS.n_modes
+    steps    = len(r_tilde_array)
+
+    W_off = np.zeros((steps, steps), dtype=complex)
+
+    for j in range(2**N_qubits):
+        for k in range(j + 1, 2**N_qubits):
+            det_sigma = np.linalg.det(sigma_JK[j, k])
+            sigma_inv = np.linalg.inv(sigma_JK[j, k])
+            prefactor = (2**n_modes) * rho_q[j, k] / (np.pi**n_modes * np.sqrt(det_sigma))
+            for m in range(steps):
+                for n in range(steps):
+                    dr = r_tilde_array[m, n] - r_JK[j, k]
+                    W_off[m, n] += prefactor * np.exp(-(dr.T @ sigma_inv @ dr)[0, 0])
+
+    return 2.0 * np.real(W_off)
+
+
+def Wigner_t_Off_Diag(GCS, r_tilde_array):
+    """Time evolution of the quantum-interference Wigner function W_q."""
+    W_q_t = np.zeros((len(GCS.t_array), len(r_tilde_array), len(r_tilde_array)))
+    for i in range(len(GCS.t_array)):
+        W_q_t[i] = Wigner_Off_Diagonal(GCS, i, r_tilde_array)
+    return W_q_t
 
 
 def Wigner_jk_t_Func(GCS, r_tilde_array):

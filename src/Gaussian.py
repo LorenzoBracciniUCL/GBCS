@@ -227,6 +227,53 @@ def Compute_R_Open_Gaussian_Numerical(n_modes, r_0, H_m, r_m, E, t_array):
 
 
 
+def equation_dot_sigma_time_dep(t, y, H_m_func, E, D, n_modes):
+    Omega = Omega_N(n_modes)
+    sigma = y.reshape((2*n_modes, 2*n_modes))
+    H = H_m_func(t)
+    sigma_dot = Omega @ (H + E) @ sigma - sigma @ (H + E).T @ Omega + D
+    return sigma_dot.flatten()
+
+def equation_dot_r_time_dep(t, y, H_m_func, r_m_func, E, n_modes):
+    Omega = Omega_N(n_modes)
+    r = y.reshape((2*n_modes, 1))
+    H = H_m_func(t)
+    r_m = r_m_func(t)
+    r_dot = Omega @ (H + E) @ r - Omega @ r_m
+    return r_dot.flatten()
+
+def Unitary_Numerical_Time_Dep(n_modes, r_0, sigma_0, H_m_func, r_m_func, t_array):
+    """Unitary Gaussian dynamics with time-dependent H_m(t) and r_m(t)."""
+    E = np.zeros((2*n_modes, 2*n_modes))
+    D = np.zeros((2*n_modes, 2*n_modes))
+    return Open_Numerical_Time_Dep(n_modes, r_0, sigma_0, H_m_func, r_m_func, E, D, t_array)
+
+def Open_Numerical_Time_Dep(n_modes, r_0, sigma_0, H_m_func, r_m_func, E, D, t_array):
+    """
+    Open Gaussian dynamics with time-dependent Hamiltonian H_m(t) and force r_m(t).
+
+    H_m_func : callable (t) -> (2n, 2n)
+    r_m_func : callable (t) -> (2n, 1)
+    E, D     : (2n, 2n) constant decoherence matrices
+    """
+    t_span = (t_array[0], t_array[-1])
+
+    sigma_sol = solve_ivp(
+        equation_dot_sigma_time_dep, t_span, sigma_0.flatten(),
+        t_eval=t_array, method='DOP853',
+        args=(H_m_func, E, D, n_modes)
+    )
+    sigma_t = sigma_sol.y.T.reshape(-1, 2*n_modes, 2*n_modes)
+
+    r_sol = solve_ivp(
+        equation_dot_r_time_dep, t_span, r_0.flatten(),
+        t_eval=t_array, method='DOP853',
+        args=(H_m_func, r_m_func, E, n_modes)
+    )
+    r_t = r_sol.y.T.reshape(-1, 2*n_modes, 1)
+
+    return r_t, sigma_t
+
 def Open_Numerical(n_modes, r_0, sigma_0, H_m, r_m, E, D, t_array):
     """
     Compute the unitary time evolution of the first and second moments 

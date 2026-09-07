@@ -261,11 +261,16 @@ class Quantum_State:
                 self.type = 'GCS'
 
         elif Hamiltonian.type[0] == 'Time':
-            self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Unitary_Operator_Time_Depentent.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
-                                                                                                            Hamiltonian.r_array_func, Hamiltonian.H_q_0_array_func, self.rho_q_0, self.t_array)
-            self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
-            self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
-            self.type = 'GCS'
+            if Hamiltonian.type[1] == 'Gaussian' and self.type != 'GCS':
+                self.r_t, self.sigma_t = Gaussian.Unitary_Numerical_Time_Dep(
+                    self.n_modes, self.r_0, self.sigma_0,
+                    Hamiltonian.H_array_func[0], Hamiltonian.r_array_func[0], t_array)
+            else:
+                self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Unitary_Operator_Time_Depentent.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
+                                                                                                                Hamiltonian.r_array_func, Hamiltonian.H_q_0_array_func, self.rho_q_0, self.t_array)
+                self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
+                self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
+                self.type = 'GCS'
 
         return
     
@@ -364,11 +369,16 @@ class Quantum_State:
                 self.type = 'GCS'
 
         elif Hamiltonian.type[0] == 'Time':
-            self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Open_Operator_Time_Depentent.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
-                                                                                                            Hamiltonian.r_array_func, Hamiltonian.H_q_0_array_func, self.rho_q_0, E, D, self.t_array)
-            self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
-            self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
-            self.type = 'GCS'
+            if Hamiltonian.type[1] == 'Gaussian' and self.type != 'GCS':
+                self.r_t, self.sigma_t = Gaussian.Open_Numerical_Time_Dep(
+                    self.n_modes, self.r_0, self.sigma_0,
+                    Hamiltonian.H_array_func[0], Hamiltonian.r_array_func[0], E, D, t_array)
+            else:
+                self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Open_Operator_Time_Depentent.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
+                                                                                                                Hamiltonian.r_array_func, Hamiltonian.H_q_0_array_func, self.rho_q_0, E, D, self.t_array)
+                self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
+                self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
+                self.type = 'GCS'
 
         return
 
@@ -571,31 +581,31 @@ class Quantum_State:
     def Plot_Trajectories_Single(self, mode=0, z_comp=0,
                                  title="Dynamics of the first moments",
                                  legend_handles=None, color_map=None, sym_lim=None,
-                                 figsize=(10, 10), elev=22, azim=-55):
+                                 figsize=(10, 10), elev=22, azim=-55, save=False):
         r_m, _ = Plots_Functions.Select_Mode(mode, self.r_JK_t, self.sigma_JK_t)
         return Plots_Functions.Plot_Trajectories_Single(
             r_m, z_comp=z_comp, title=title,
             legend_handles=legend_handles, color_map=color_map,
-            sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim)
+            sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim, save=save)
 
     def Plot_Vectors_Single(self, t_idx, mode=0, z_comp=0, title="First moments",
                             legend_handles=None, color_map=None, sym_lim=None,
-                            figsize=(10, 10), elev=22, azim=-55):
+                            figsize=(10, 10), elev=22, azim=-55, save=False):
         r_m, _ = Plots_Functions.Select_Mode(mode, self.r_JK_t, self.sigma_JK_t)
         return Plots_Functions.Plot_Vectors_Single(
             r_m, t_idx, z_comp=z_comp, title=title,
             legend_handles=legend_handles, color_map=color_map,
-            sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim)
+            sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim, save=save)
 
     def Plot_Vectors_Ellipsoids_Single(self, t_idx, mode=0, z_comp=0,
                                        title="First moments with uncertainty",
                                        legend_handles=None, color_map=None, sym_lim=None,
-                                       figsize=(10, 10), elev=22, azim=-55):
+                                       figsize=(10, 10), elev=22, azim=-55, save=False):
         r_m, s_m = Plots_Functions.Select_Mode(mode, self.r_JK_t, self.sigma_JK_t)
         return Plots_Functions.Plot_Vectors_Ellipsoids_Single(
             r_m, s_m, t_idx, z_comp=z_comp, title=title,
             legend_handles=legend_handles, color_map=color_map,
-            sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim)
+            sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim, save=save)
 
     def Animate_Vectors_Single(self, mode=0, z_comp=0,
                                title="First moments",
@@ -612,30 +622,30 @@ class Quantum_State:
     def Plot_Diagonal_Multi_Time_2D(self, t_idx_array, alpha_array, mode=0,
                                     color_map=None, sym_lim=None,
                                     title="On-diagonal first moments",
-                                    figsize=(6, 6)):
+                                    figsize=(6, 6), save=False):
         r_m, s_m = Plots_Functions.Select_Mode(mode, self.r_JK_t, self.sigma_JK_t)
         return Plots_Functions.Plot_Diagonal_Multi_Time_2D(
             r_m, s_m, t_idx_array, alpha_array,
-            color_map=color_map, sym_lim=sym_lim, title=title, figsize=figsize)
+            color_map=color_map, sym_lim=sym_lim, title=title, figsize=figsize, save=save)
 
     def Plot_Phase_Space_Summary(self, t_idx_array, alpha_array, mode=0,
                                  color_map=None, sym_lim_2d=None, sym_lim_3d=None,
-                                 title="", figsize=(18, 6), elev=22, azim=-55):
+                                 title="", figsize=(18, 6), elev=22, azim=-55, save=False):
         r_m, s_m = Plots_Functions.Select_Mode(mode, self.r_JK_t, self.sigma_JK_t)
         return Plots_Functions.Plot_Phase_Space_Summary(
             r_m, s_m, t_idx_array, alpha_array,
             color_map=color_map, sym_lim_2d=sym_lim_2d, sym_lim_3d=sym_lim_3d,
-            title=title, figsize=figsize, elev=elev, azim=azim)
+            title=title, figsize=figsize, elev=elev, azim=azim, save=save)
 
     def Plot_Vectors_Ellipsoids_Multi_Time(self, t_idx_array, alpha_array, mode=0, z_comp=0,
                                            title="First moments with uncertainty",
                                            legend_handles=None, color_map=None, sym_lim=None,
-                                           figsize=(10, 10), elev=22, azim=-55):
+                                           figsize=(10, 10), elev=22, azim=-55, save=False):
         r_m, s_m = Plots_Functions.Select_Mode(mode, self.r_JK_t, self.sigma_JK_t)
         return Plots_Functions.Plot_Vectors_Ellipsoids_Multi_Time(
             r_m, s_m, t_idx_array, alpha_array, z_comp=z_comp, title=title,
             legend_handles=legend_handles, color_map=color_map,
-            sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim)
+            sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim, save=save)
 
     def Animate_Vectors_Ellipsoids_Single(self, mode=0, z_comp=0,
                                           title="First moments with uncertainty",
@@ -668,11 +678,67 @@ class Quantum_State:
         fig = Plots_Functions.Animate_Fringes(self.wigner_PMS_t,  x_array, p_array, bar_limits, array_tick, n_frames, title, save)
         return
     
+    def Plot_Wigner_Function_GCS_Fringes(self, steps, time_index, mode_number, sigma_para, array_tick, title, save):
+        """Plot W_c and W_q side by side at a single time index.
+
+        W_c = sum of diagonal Wigner functions (classical mixture).
+        W_q = 2 Re[off-diagonal sum] (quantum interference fringes).
+
+        Parameters match Plot_Wigner_Function_Diag; sigma_para sets the grid extent.
+        """
+        r_tilde_array, x_array, p_array, _, _ = Wigner_Functions.Create_r_tilde_array(
+            self, sigma_para, mode_number, steps)
+        W_c = Wigner_Functions.Wigner_Sum_Diagonal(self, time_index, r_tilde_array)
+        W_q = Wigner_Functions.Wigner_Off_Diagonal(self, time_index, r_tilde_array)
+        Plots_Functions.Plot_Wigner_GCS_Fringes(W_c, W_q, x_array, p_array, array_tick, title, save)
+
+    def Animate_Wigner_Function_GCS_Fringes(self, steps, mode_number, sigma_para, array_tick, n_frames, title, save):
+        """Animate W_c and W_q over the full time evolution.
+
+        Precomputes both Wigner time series, then passes them to Animate_GCS_Fringes.
+        Color limits are fixed to the global extrema so fringes are visually comparable.
+        """
+        r_tilde_array, x_array, p_array, _, _ = Wigner_Functions.Create_r_tilde_array(
+            self, sigma_para, mode_number, steps)
+        self.wigner_c_t = Wigner_Functions.Wigner_t_Sum_Diag(self, r_tilde_array)
+        self.wigner_q_t = Wigner_Functions.Wigner_t_Off_Diag(self, r_tilde_array)
+        Plots_Functions.Animate_GCS_Fringes(
+            self.wigner_c_t, self.wigner_q_t,
+            x_array, p_array, array_tick, n_frames, title, save)
+
+    def Plot_Wigner_Function_GCS_Total(self, steps, time_index, mode_number, sigma_para, array_tick, title, save):
+        """Plot W_total = W_c + W_q at a single time index.
+
+        Reuses cached wigner_c_t / wigner_q_t if already computed, otherwise
+        evaluates both at the requested time index on the fly.
+        """
+        r_tilde_array, x_array, p_array, _, _ = Wigner_Functions.Create_r_tilde_array(
+            self, sigma_para, mode_number, steps)
+        W_c = Wigner_Functions.Wigner_Sum_Diagonal(self, time_index, r_tilde_array)
+        W_q = Wigner_Functions.Wigner_Off_Diagonal(self, time_index, r_tilde_array)
+        Plots_Functions.Plot_Wigner_GCS_Total(W_c + W_q, x_array, p_array, array_tick, title, save)
+
+    def Animate_Wigner_Function_GCS_Total(self, steps, mode_number, sigma_para, array_tick, n_frames, title, save):
+        """Animate W_total = W_c + W_q over the full time evolution.
+
+        Precomputes both Wigner time series and sums them before animating.
+        Color limits are fixed globally so the scale is stable across frames.
+        """
+        r_tilde_array, x_array, p_array, _, _ = Wigner_Functions.Create_r_tilde_array(
+            self, sigma_para, mode_number, steps)
+        W_c_t = Wigner_Functions.Wigner_t_Sum_Diag(self, r_tilde_array)
+        W_q_t = Wigner_Functions.Wigner_t_Off_Diag(self, r_tilde_array)
+        Plots_Functions.Animate_GCS_Total(
+            W_c_t + W_q_t, x_array, p_array, array_tick, n_frames, title, save)
+
     def Animate_Gaussian(self, steps, mode_number, sigma_para, array_tick, n_frames, title, save):
-            
-        r_tilde_array, x_array, p_array, XX, PP = Wigner_Functions.Create_r_tilde_array(self,sigma_para, mode_number, steps)
-        self.wigner_gauss_t = Wigner_Functions.Wigner_t_Gauss(self, r_tilde_array)
+
+        r_tilde_array, x_array, p_array, XX, PP = Wigner_Functions.Create_r_tilde_array(self, sigma_para, mode_number, steps)
+        if isinstance(self.r_t, np.ndarray):
+            self.wigner_gauss_t = Wigner_Functions.Wigner_t_Gauss(self, r_tilde_array)
+        else:
+            self.wigner_gauss_t = Wigner_Functions.Wigner_t_Sum_Diag(self, r_tilde_array)
         bar_limits = [0, np.max(self.wigner_gauss_t)]
-        fig = Plots_Functions.Animate_Diagonal(self.wigner_gauss_t,  x_array, p_array, bar_limits, array_tick, n_frames, title, save)
+        fig = Plots_Functions.Animate_Diagonal(self.wigner_gauss_t, x_array, p_array, bar_limits, array_tick, n_frames, title, save)
         return
         

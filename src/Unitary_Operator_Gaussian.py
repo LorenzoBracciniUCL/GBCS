@@ -49,8 +49,9 @@ def equation_dot_sigma_jk(t, y, H_J, H_K, n_modes):
     Omega = Gaussian.Omega_N(n_modes) 
     sigma_jk = y.reshape((2*n_modes, 2*n_modes))  # Reshape to 2n x 2n matrix
     
-    # Compute derivative
-    sigma_jk_dot = 0.5 * (Omega @ (H_J + H_K) @ sigma_jk - sigma_jk @ (H_J + H_K) @ Omega ) - 1j * (sigma_jk@(H_J - H_K) @ sigma_jk + Omega @ (H_J - H_K) @ Omega)
+    # Compute derivative (Tab. 1: ½ applied to all four terms; −i on both Riccati and ΩΔΩ)
+    sigma_jk_dot = 0.5 * (Omega @ (H_J + H_K) @ sigma_jk - sigma_jk @ (H_J + H_K) @ Omega
+                          - 1j * (sigma_jk @ (H_J - H_K) @ sigma_jk + Omega @ (H_J - H_K) @ Omega))
 
     return  sigma_jk_dot.flatten()
 
