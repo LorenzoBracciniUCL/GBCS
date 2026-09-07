@@ -1318,6 +1318,184 @@ def Draw_Ellipsoids(ax, r_JK_t, sigma_JK_t, t_idx, z_comp, color_map=None, alpha
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  OFF-DIAGONAL DECOMPOSITION AND TILTED PANCAKE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def decompose_sigma_off_diagonal(sigma_off, atol=1e-10):
+    """Try to write sigma_off = U Sigma U^T with real orthogonal U and complex diagonal Sigma.
+
+    Valid only for n=1 (2×2 matrices). Uses the commutativity criterion: [Re(σ), Im(σ)] = 0
+    is necessary and sufficient for simultaneous real diagonalization.
+
+    Returns
+    -------
+    U         : (2, 2) real orthogonal — rotation matrix
+    Sigma     : (2, 2) complex diagonal — diagonal covariance in rotated frame
+    magnitudes: (2,) float — |Sigma_ii|
+    phases    : (2,) float — arg(Sigma_ii) in radians
+
+    Raises
+    ------
+    ValueError if sigma_off cannot be decomposed with a real orthogonal U.
+    """
+    A = np.real(sigma_off)
+    B = np.imag(sigma_off)
+
+    if not np.allclose(A, A.T, atol=atol):
+        raise ValueError("Re(sigma_off) is not symmetric — cannot decompose with real orthogonal U.")
+    if not np.allclose(B, B.T, atol=atol):
+        raise ValueError("Im(sigma_off) is not symmetric — cannot decompose with real orthogonal U.")
+
+    comm = A @ B - B @ A
+    if np.max(np.abs(comm)) > atol:
+        raise ValueError(
+            f"Re(sigma_off) and Im(sigma_off) do not commute "
+            f"(max |[A,B]| = {np.max(np.abs(comm)):.2e}); "
+            "sigma_off cannot be written as U Sigma U^T with real orthogonal U."
+        )
+
+    _, U = np.linalg.eigh(A)
+    U = np.real(U)
+
+    # eigh returns columns in ascending eigenvalue order.
+    # Re-order so that the eigenvector with the larger |x-component| (U[0,j]) comes first,
+    # ensuring j=0 always corresponds to the x-like axis and j=1 to the p-like axis —
+    # consistent with canonical (x,p) ordering and the z_comp=0 tilting convention.
+    if abs(U[0, 0]) < abs(U[0, 1]):
+        U = U[:, ::-1]
+
+    B_rot = U.T @ B @ U
+    off_diag = B_rot - np.diag(np.diag(B_rot))
+    if np.max(np.abs(off_diag)) > atol:
+        raise ValueError(
+            f"U^T Im(sigma_off) U is not diagonal "
+            f"(max off-diag = {np.max(np.abs(off_diag)):.2e}); "
+            "sigma_off cannot be written as U Sigma U^T with real orthogonal U."
+        )
+
+    Sigma = U.T @ sigma_off @ U
+    diag_entries = np.diag(Sigma)
+    magnitudes = np.abs(diag_entries)
+    phases = np.angle(diag_entries)
+
+    return U, Sigma, magnitudes, phases
+
+
+def transform_to_diagonal_frame(sigma_off, sigma_on_plus, sigma_on_minus,
+                                 r_off, r_on_plus, r_on_minus, atol=1e-10):
+    """Rotate all GCS phase-space quantities to the diagonal frame of sigma_off.
+
+    Decomposes sigma_off = U Sigma U^T (n=1, 2×2 only) and applies U^T to every
+    covariance matrix and first-moment vector.
+
+    Parameters
+    ----------
+    sigma_off      : (2, 2) complex — off-diagonal covariance
+    sigma_on_plus  : (2, 2) complex — on-diagonal (+,+) covariance
+    sigma_on_minus : (2, 2) complex — on-diagonal (-,-) covariance
+    r_off          : (2, 1) complex — off-diagonal first moment
+    r_on_plus      : (2, 1) complex — on-diagonal (+,+) first moment
+    r_on_minus     : (2, 1) complex — on-diagonal (-,-) first moment
+    atol           : float — tolerance passed to decompose_sigma_off_diagonal
+
+    Returns
+    -------
+    dict with keys U, Sigma, magnitudes, phases, sigma_off_diag,
+    sigma_on_plus_rot, sigma_on_minus_rot, r_off_rot, r_on_plus_rot, r_on_minus_rot;
+    or None if sigma_off is not real-diagonalizable (error printed).
+    """
+    try:
+        U, Sigma, magnitudes, phases = decompose_sigma_off_diagonal(sigma_off, atol=atol)
+    except ValueError as e:
+        print(f"[transform_to_diagonal_frame] Not plottable: {e}")
+        return None
+
+    def _rot_sigma(s):
+        return U.T @ s @ U
+
+    def _rot_r(r):
+        return U.T @ r
+
+    return {
+        'U': U,
+        'Sigma': Sigma,
+        'magnitudes': magnitudes,
+        'phases': phases,
+        'sigma_off_diag': Sigma,
+        'sigma_on_plus_rot': _rot_sigma(sigma_on_plus),
+        'sigma_on_minus_rot': _rot_sigma(sigma_on_minus),
+        'r_off_rot': _rot_r(r_off),
+        'r_on_plus_rot': _rot_r(r_on_plus),
+        'r_on_minus_rot': _rot_r(r_on_minus),
+    }
+
+
+def Draw_Tilted_Pancake_3D(ax, center, sigma_off, z_comp=0, color='tomato',
+                            alpha_fill=0.22, alpha_edge=0.8, n_pts=300,
+                            label=None, atol=1e-10):
+    """Draw the off-diagonal covariance as a tilted pancake (flat 2-D ellipse) in 3-D phase space.
+
+    Decomposes sigma_off = U Sigma U^T (n=1 only). Each principal axis j is tilted
+    by its polar phase phi_j toward the Im direction shown on the z-axis if j == z_comp;
+    otherwise it stays in the (Re[x], Re[p]) plane.
+
+    Semi-axis vectors:
+        e_j = sqrt(|Sigma_jj|) * [U[:,j]*cos(phi_j), sin(phi_j)]   if j == z_comp
+        e_j = sqrt(|Sigma_jj|) * [U[:,j], 0]                        otherwise
+
+    Prints an error and returns without drawing if sigma_off is not real-diagonalizable.
+
+    Parameters
+    ----------
+    ax         : Axes3D
+    center     : array-like (3,) — [cx, cy, cz] in (Re[x], Re[p], Im[x_z_comp]) coordinates
+    sigma_off  : (2, 2) complex — off-diagonal covariance matrix (n=1 only)
+    z_comp     : 0 -> Im[x] on z-axis,  1 -> Im[p] on z-axis
+    color      : face and edge colour
+    alpha_fill : face transparency (0–1)
+    alpha_edge : outline opacity (0–1)
+    n_pts      : number of perimeter sample points
+    label      : legend label string (None = no legend entry)
+    atol       : tolerance for the real-decomposition check
+    """
+    try:
+        U, _, magnitudes, phases = decompose_sigma_off_diagonal(sigma_off, atol=atol)
+    except ValueError as e:
+        print(f"[Draw_Tilted_Pancake_3D] Not plottable: {e}")
+        return
+
+    cx, cy, cz = np.asarray(center, dtype=float)
+    theta = np.linspace(0, 2 * np.pi, n_pts)
+
+    axes_3d = []
+    for j in range(2):
+        amp = np.sqrt(magnitudes[j])
+        ux, up = float(U[0, j]), float(U[1, j])
+        phi_j = phases[j]
+        if j == z_comp:
+            e = amp * np.array([ux * np.cos(phi_j), up * np.cos(phi_j), np.sin(phi_j)])
+        else:
+            e = amp * np.array([ux, up, 0.0])
+        axes_3d.append(e)
+
+    e1, e2 = axes_3d
+    xs = cx + e1[0]*np.cos(theta) + e2[0]*np.sin(theta)
+    ys = cy + e1[1]*np.cos(theta) + e2[1]*np.sin(theta)
+    zs = cz + e1[2]*np.cos(theta) + e2[2]*np.sin(theta)
+
+    verts = [list(zip(xs, ys, zs))]
+    poly = Poly3DCollection(verts, alpha=alpha_fill,
+                            facecolor=color, edgecolor='none', zorder=5)
+    ax.add_collection3d(poly)
+
+    lbl = label if label is not None else '_nolegend_'
+    ax.plot(xs, ys, zs, color=color, linewidth=1.4, alpha=alpha_edge, label=lbl, zorder=6)
+
+    ax.plot(xs, ys, np.full_like(zs, cz), '--',
+            color=color, linewidth=0.8, alpha=0.4, zorder=4)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  PUBLIC UTILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
