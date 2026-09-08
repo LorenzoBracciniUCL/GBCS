@@ -1642,6 +1642,65 @@ def Plot_Vectors_Ellipsoids_Single(r_JK_t, sigma_JK_t, t_idx, z_comp=0,
     return fig, ax
 
 
+def Plot_3D_Diagonal_Sigma(r_JK_t, sigma_JK_t, t_idx, z_comp=0,
+                           title="3-D phase space",
+                           legend_handles=None, color_map=None,
+                           sym_lim=None, pancake_color='tomato',
+                           figsize=(10, 10), elev=22, azim=-55, save=False):
+    """3-D phase-space snapshot: on-diagonal ellipsoids + off-diagonal tilted pancake.
+
+    Draws first-moment vectors and uncertainty ellipsoids for the on-diagonal
+    branches (j=k), then decomposes the off-diagonal covariance σ^off = U Σ U^T
+    and draws it as a flat pancake tilted by the polar phases of Σ.
+
+    Silently skips the pancake if σ^off is not real-diagonalizable
+    (error message printed by Draw_Tilted_Pancake_3D).
+
+    Parameters
+    ----------
+    r_JK_t       : ndarray (T, 2, 2, 2, 1) complex — first moments
+    sigma_JK_t   : ndarray (T, 2, 2, 2, 2) complex — covariance matrices
+    t_idx        : int — time index to snapshot
+    z_comp       : 0 → Im[x] on z-axis,  1 → Im[p] on z-axis
+    title        : figure title string
+    legend_handles : explicit legend entries (None = auto, [] = none)
+    color_map    : dict role→colour (None = defaults)
+    sym_lim      : (lo, hi) — computed from data if None
+    pancake_color : colour for the off-diagonal pancake
+    figsize, elev, azim : figure / view-angle controls
+    save         : path to save as PNG/SVG, or False
+
+    Returns
+    -------
+    fig, ax : Figure and Axes3D
+    """
+    rcParams['mathtext.fontset'] = 'cm'
+    rcParams['font.family'] = 'STIXGeneral'
+
+    if sym_lim is None:
+        sym_lim = Sym_Lim_From_Data(r_JK_t[[t_idx]], sigma_JK_t[[t_idx]])
+
+    fig, ax = _make_scene_3d(sym_lim, z_comp=z_comp, figsize=figsize, elev=elev, azim=azim)
+    Draw_XY_Plane(ax, sym_lim)
+    Draw_Vectors(ax, r_JK_t, t_idx, z_comp, color_map=color_map)
+    Draw_Ellipsoids(ax, r_JK_t, sigma_JK_t, t_idx, z_comp, color_map=color_map)
+
+    sigma_off = sigma_JK_t[t_idx, 0, 1]
+    r_off     = r_JK_t[t_idx, 0, 1]
+    cx = float(r_off[0, 0].real)
+    cy = float(r_off[1, 0].real)
+    cz = float(r_off[z_comp, 0].imag)
+    Draw_Tilted_Pancake_3D(ax, [cx, cy, cz], sigma_off, z_comp=z_comp,
+                            color=pancake_color,
+                            label=r'$\sigma^{\mathrm{off}}$')
+
+    _finalise_3d(ax, fig, sym_lim, z_comp,
+                 title=title, legend_handles=legend_handles)
+    if save:
+        plt.savefig(save, bbox_inches='tight')
+    return fig, ax
+
+
 def Plot_Vectors_Ellipsoids_Multi_Time(r_JK_t, sigma_JK_t, t_idx_array, alpha_array,
                                        z_comp=0,
                                        title="First moments with uncertainty",

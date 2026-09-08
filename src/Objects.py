@@ -659,6 +659,38 @@ class Quantum_State:
             sym_lim=sym_lim, figsize=figsize, elev=elev, azim=azim,
             n_frames=n_frames, interval=interval, save=save)
 
+    def Plot_3D_Diagonal_Sigma(self, t_idx, mode=0, z_comp=0,
+                               title="3-D phase space",
+                               legend_handles=None, color_map=None, sym_lim=None,
+                               pancake_color='tomato',
+                               figsize=(10, 10), elev=22, azim=-55, save=False):
+        """3-D phase-space snapshot: on-diagonal ellipsoids + off-diagonal tilted pancake.
+
+        For N=1 qubit, n=1 mode only. Decomposes σ^off = U Σ U^T (real orthogonal U,
+        complex diagonal Σ) and draws it as a pancake tilted by the polar phases of Σ.
+        On-diagonal branches are shown as arrows (first moments) + uncertainty ellipsoids.
+
+        Parameters
+        ----------
+        t_idx        : int — time index to snapshot
+        mode         : int — bosonic mode index (0-based), for multi-mode states
+        z_comp       : 0 → Im[x] on z-axis,  1 → Im[p] on z-axis
+        title        : figure title
+        pancake_color : colour for the off-diagonal pancake (default 'tomato')
+        sym_lim      : (lo, hi) — inferred from data if None
+        save         : file path to save, or False
+
+        Returns
+        -------
+        fig, ax : Figure and Axes3D
+        """
+        r_m, s_m = Plots_Functions.Select_Mode(mode, self.r_JK_t, self.sigma_JK_t)
+        return Plots_Functions.Plot_3D_Diagonal_Sigma(
+            r_m, s_m, t_idx, z_comp=z_comp, title=title,
+            legend_handles=legend_handles, color_map=color_map,
+            sym_lim=sym_lim, pancake_color=pancake_color,
+            figsize=figsize, elev=elev, azim=azim, save=save)
+
 ################################## Animation ##################################
 
     def Animate_Wigner_Function_Diag(self, steps, mode_number, sigma_para, array_tick, n_frames, title,save):
