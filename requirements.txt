@@ -1,0 +1,13 @@
+# Versions the results in notebooks/ were produced with.
+# numpy is capped below 2.0: the library uses np.trapz, which 2.0 removed in favour of
+# np.trapezoid (np.trapezoid does not exist in 1.26, so the call cannot simply be renamed
+# without dropping support for this pin).  See review.md, "Remaining open issues".
+numpy>=1.24,<2.0
+scipy>=1.10,<2.0
+matplotlib>=3.7
+numba>=0.58
+# notebooks only
+jupyter>=1.0
+nbconvert>=7.0
+# tests only
+pytest>=7.0

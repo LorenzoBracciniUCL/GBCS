@@ -750,6 +750,26 @@ class Quantum_State:
         W_q = Wigner_Functions.Wigner_Off_Diagonal(self, time_index, r_tilde_array)
         Plots_Functions.Plot_Wigner_GCS_Total(W_c + W_q, x_array, p_array, array_tick, title, save)
 
+    def Plot_Wigner_Function_GCS_Weighted(self, steps, time_index, mode_number, sigma_para,
+                                          array_tick, W_g, p_c=1.0, p_q=1.0, p_g=1.0,
+                                          title=False, save=False):
+        """Plot p_c*W_c + p_q*W_q + p_g*W_g at a single time index.
+
+        Sibling of Plot_Wigner_Function_GCS_Total that admits an extra user-supplied
+        Wigner component W_g (callable W(x, p) or an array on the same grid), e.g. the
+        DV-decay term W_Gamma of Appendix I B.
+
+        Returns
+        -------
+        fig, im, W_sum
+        """
+        r_tilde_array, x_array, p_array, _, _ = Wigner_Functions.Create_r_tilde_array(
+            self, sigma_para, mode_number, steps)
+        W_c = Wigner_Functions.Wigner_Sum_Diagonal(self, time_index, r_tilde_array)
+        W_q = Wigner_Functions.Wigner_Off_Diagonal(self, time_index, r_tilde_array)
+        return Plots_Functions.Plot_Wigner_GCS_Weighted(
+            W_c, W_q, W_g, p_c, p_q, p_g, x_array, p_array, array_tick, title, save)
+
     def Animate_Wigner_Function_GCS_Total(self, steps, mode_number, sigma_para, array_tick, n_frames, title, save):
         """Animate W_total = W_c + W_q over the full time evolution.
 
@@ -774,3 +794,32 @@ class Quantum_State:
         fig = Plots_Functions.Animate_Diagonal(self.wigner_gauss_t, x_array, p_array, bar_limits, array_tick, n_frames, title, save)
         return
         
+    def Animate_Gaussian_Trajectory(self, steps, mode_number, sigma_para, array_tick, n_frames, title, save,
+                                    trail=True, trail_length=None, trail_color='navy'):
+        """Animate_Gaussian with an optional trailing path of the first moment r_t."""
+        r_tilde_array, x_array, p_array, XX, PP = Wigner_Functions.Create_r_tilde_array(self, sigma_para, mode_number, steps)
+        self.wigner_gauss_t = Wigner_Functions.Wigner_t_Gauss(self, r_tilde_array)
+        bar_limits = [0, np.max(self.wigner_gauss_t)]
+        R_t = self.r_t[:, 2*mode_number:2*mode_number + 2, 0]
+        return Plots_Functions.Animate_Gaussian_Trajectory(
+            self.wigner_gauss_t, x_array, p_array, bar_limits, array_tick, R_t, n_frames, title, save,
+            trail=trail, trail_length=trail_length, trail_color=trail_color)
+
+################################## Stochastic Monitoring ##################################
+
+    def Initialize_Stochastic_Sample(self, t_array, R_t, Sigma_t, sample=0, stride=1):
+        """
+        Load one conditional trajectory as a Gaussian time series, so that the Gaussian
+        Wigner/animation methods (Animate_Gaussian, Animate_Gaussian_Trajectory) apply.
+
+        t_array : (n_t,)                  time grid from Stochastic.Sample_CQ_Trajectories
+        R_t     : (n_samples, n_t, 2n)    stochastic first moments
+        Sigma_t : (n_t, 2n, 2n)           deterministic covariance
+        sample  : which trajectory to load
+        stride  : keep every stride-th time step (animation frames)
+        """
+        self.t_array = t_array[::stride]
+        self.r_t = R_t[sample, ::stride, :, None]
+        self.sigma_t = Sigma_t[::stride]
+        self.type = 'Gaussian'
+        return

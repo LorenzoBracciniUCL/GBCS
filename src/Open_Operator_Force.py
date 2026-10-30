@@ -31,10 +31,10 @@ def Compute_Sigma_JK_Open(N_qubits, n_modes, sigma_0, H_m, E, D, t_array):
 
     for k in range(len(t_array)):
         tau = t_array[k]
-        S_m_tau = np.exp(omega@H_m*tau)
+        S_m_tau = linalg.expm(omega@H_m*tau)
 
         def Integrand(t):
-            S_m_t_tau = np.exp(omega@H_m*(tau - t))
+            S_m_t_tau = linalg.expm(omega@H_m*(tau - t))
             return S_m_t_tau@D@S_m_t_tau.T
     
         additional_term = quad_vec(Integrand, 0, tau)
@@ -52,7 +52,7 @@ def Compute_R_JK_Open_Symetric_Numerical(n_modes, r_0_t, sigma_t, r_J_t, r_J, r_
     R_JK = r_0_t  - 1/2*(r_J_t - r_J + r_K_t - r_K ) - 1J/2* sigma_t@omega@(r_J_t - r_J - r_K_t + r_K)
 
     def Integrand(t):
-        S_m_t_tau = np.exp(omega@H_m*(tau - t))
+        S_m_t_tau = linalg.expm(omega@H_m*(tau - t))
         return S_m_t_tau@D@S_m_t_tau.T@omega@((S_m_t_tau@r_J - r_J_t) - (S_m_t_tau@r_K - r_K_t ))
     
     additional_term = quad_vec(Integrand, 0, tau)
@@ -64,12 +64,12 @@ def Compute_C_JK_Open_Symetric_Numerical(n_modes, sigma_t, r_J_t,r_J, r_K_t, r_K
     C_JK =  1/4*np.transpose(r_J_t - r_J - r_K_t + r_K)@np.transpose(omega)@sigma_t@omega@(r_J_t - r_J - r_K_t + r_K)
 
     def Integrand(t):
-        S_m_t_tau = np.exp(omega@H_m*(tau - t))
-        return ((S_m_t_tau@r_J - r_J_t) - (S_m_t_tau@r_K - r_K_t)).T@omega.T@S_m_t_tau@D@S_m_t_tau.T@omega@((S_m_t_tau@r_J + r_J_t - 2*r_J) - (S_m_t_tau@r_K + r_K_t - 2*r_K))
+        S_m_t_tau = linalg.expm(omega@H_m*(tau - t))
+        return (((S_m_t_tau@r_J - r_J_t) - (S_m_t_tau@r_K - r_K_t)).T@omega.T@S_m_t_tau@D@S_m_t_tau.T@omega@((S_m_t_tau@r_J + r_J_t - 2*r_J) - (S_m_t_tau@r_K + r_K_t - 2*r_K)))[0, 0]
     
     additional_term = quad(Integrand, 0, tau)
 
-    return np.real(C_JK[0,0] + additional_term[0])
+    return np.real(C_JK[0,0] + additional_term[0]/4)
 
 def Compute_phi_JK_Unitary_Gaussian_Force_Numerical(n_modes, r_0_t, r_0, r_J_t,r_J, r_K_t, r_K, H_m, H_q_0_array,J_labels, K_labels, time):
     omega = Gaussian.Omega_N(n_modes)
@@ -98,8 +98,8 @@ def Dynamics_Symetric_Numerical(N_qubits, n_modes, r_0, sigma_0, H_m, r_ham_arra
         sigma_0_jk = np.broadcast_to(sigma_0[np.newaxis, np.newaxis], (N2, N2, 2*n_modes, 2*n_modes))
         r_0_jk = np.broadcast_to(r_0[np.newaxis, np.newaxis], (N2, N2, 2*n_modes, 1))
 
-    sigma_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 2*n_modes))
-    r_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 1), dtype=np.complex64)
+    sigma_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 2*n_modes), dtype=np.complex128)
+    r_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 1), dtype=np.complex128)
     C_JK_t = np.zeros((len(t_array), N2, N2))
     phi_JK_t = np.zeros((len(t_array), N2, N2))
 
@@ -109,7 +109,7 @@ def Dynamics_Symetric_Numerical(N_qubits, n_modes, r_0, sigma_0, H_m, r_ham_arra
 
         # Additive diffusion correction — same for all branches
         def _integrand(t):
-            S_m_t_tau = np.exp(omega@H_m*(tau - t))
+            S_m_t_tau = linalg.expm(omega@H_m*(tau - t))
             return S_m_t_tau@D@S_m_t_tau.T
         sigma_correction = quad_vec(_integrand, 0, tau)[0]
 

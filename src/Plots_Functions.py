@@ -10,9 +10,11 @@ from matplotlib import cm
 from matplotlib import rcParams
 from matplotlib import colors
 from fractions import Fraction as Fraction
+import warnings
 import matplotlib.animation as animation
 import matplotlib.lines as mlines
 from matplotlib.patches import Ellipse
+from matplotlib.collections import LineCollection
 from mpl_toolkits.mplot3d import Axes3D           # noqa: F401
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
@@ -666,6 +668,141 @@ def Animate_GCS_Total(W_total_t, x_array, p_array, array_tick, n_frames, title, 
     return ani
 
 
+def Evaluate_Wigner_On_Grid(W, x_array, p_array):
+    """Evaluate a Wigner function on the phase-space grid used by the plotting routines.
+
+    `W` is either a callable `W(x, p)` -- evaluated once on the whole meshgrid, so it
+    must broadcast -- or an already-computed array of shape (len(p_array), len(x_array)).
+    Row index runs over p and column index over x, matching the grid built by
+    Wigner_Functions.Create_r_tilde_array and the origin='lower' imshow used elsewhere.
+
+    Parameters
+    ----------
+    W        : callable W(x, p) -> array, or (len(p_array), len(x_array)) array
+    x_array, p_array : 1-D coordinate arrays
+
+    Returns
+    -------
+    (len(p_array), len(x_array)) real array
+    """
+    if callable(W):
+        XX, PP = np.meshgrid(x_array, p_array)
+        W = W(XX, PP)
+    W = np.asarray(W)
+    if W.shape != (len(p_array), len(x_array)):
+        raise ValueError(f"Wigner grid has shape {W.shape}, expected "
+                         f"{(len(p_array), len(x_array))} = (len(p_array), len(x_array))")
+    if not np.all(np.isfinite(W)):
+        # a NaN would otherwise propagate into vmin/vmax and render a blank figure
+        raise ValueError(f"Wigner grid contains {np.count_nonzero(~np.isfinite(W))} "
+                         f"non-finite values")
+    return W
+
+
+def Plot_Wigner_Generic(W, x_array, p_array, array_tick, title, save,
+                        bar=None, cbar_label=r'$\mathcal{W}(\tilde{r})$'):
+    """Plot an arbitrary Wigner function in the same style as Plot_Wigner_GCS_Total.
+
+    Diverging RdBu colormap symmetric about zero, so negativity is immediately visible.
+
+    Parameters
+    ----------
+    W          : callable W(x, p), or (len(p_array), len(x_array)) real array
+    x_array, p_array : 1-D coordinate arrays
+    array_tick : tick positions
+    title      : axes title string (False / '' to omit)
+    save       : filepath to save, or False
+    bar        : colour-scale extremum; None -> max|W|
+    cbar_label : colourbar label
+
+    Returns
+    -------
+    fig, im, W_grid
+    """
+    rcParams['mathtext.fontset'] = 'cm'
+    rcParams['font.family'] = 'STIXGeneral'
+
+    W_grid = Evaluate_Wigner_On_Grid(W, x_array, p_array)
+
+    fig, ax = plt.subplots(1, 1, figsize=(3.5, 3.5), dpi=300)
+    fig.set_tight_layout(True)
+
+    lables_tick = format_latex_numbers(array_tick)
+    x_lo, x_hi = float(np.min(x_array)), float(np.max(x_array))
+    p_lo, p_hi = float(np.min(p_array)), float(np.max(p_array))
+    if bar is None:
+        bar = float(np.max(np.abs(W_grid))) if np.max(np.abs(W_grid)) > 0 else 1.0
+
+    ax.axvline(x=0, color='black', linewidth=0.5, alpha=0.4)
+    ax.axhline(y=0, color='black', linewidth=0.5, alpha=0.4)
+    ax.set_ylabel(r'Momentum, $p$', labelpad=2, fontsize=11)
+    ax.set_xlabel(r'Position, $x$', labelpad=2, fontsize=11)
+    ax.set_xlim(x_lo, x_hi)
+    ax.set_ylim(p_lo, p_hi)
+    ax.set_xticks(array_tick)
+    ax.set_xticklabels(lables_tick)
+    ax.set_yticks(array_tick)
+    ax.set_yticklabels(lables_tick)
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.5)
+
+    # True data extents, and an aspect that keeps the axes box square for any grid.
+    # (The other Plot_Wigner_* helpers fold len(p)/len(x) into both, which agrees with
+    # this only when the grid is square with equal x and p ranges.)
+    im = ax.imshow(W_grid, cmap='RdBu', interpolation='bilinear',
+                   origin='lower', vmin=-bar, vmax=bar,
+                   aspect=(x_hi - x_lo) / (p_hi - p_lo),
+                   extent=[x_lo, x_hi, p_lo, p_hi])
+
+    cbar = fig.colorbar(im, fraction=0.046, pad=0.04, orientation='vertical')
+    cbar.set_ticks([-bar, 0, bar])
+    cbar.set_ticklabels([f'{-bar:.2g}', r'$0$', f'{bar:.2g}'], fontsize=8)
+    cbar.set_label(cbar_label, fontsize=10, labelpad=4, rotation=-90)
+
+    if title:
+        ax.set_title(title, fontsize=13)
+    if save:
+        plt.savefig(save, bbox_inches='tight', transparent=True)
+    return fig, im, W_grid
+
+
+def Plot_Wigner_GCS_Weighted(W_c, W_q, W_g, p_c, p_q, p_g,
+                             x_array, p_array, array_tick, title, save, atol=1e-8):
+    """Plot the weighted superposition p_c*W_c + p_q*W_q + p_g*W_g.
+
+    W_c and W_q are the classical and quantum GCS components built from Eq.(wigner_jk)
+    (they are defined in the surrounding prose of the paper, not in a numbered equation);
+    W_g is any further Wigner component, e.g. the DV-decay term W_Gamma of Appendix I B.  The
+    weights are free -- nothing is renormalised -- but a warning is printed when they
+    do not sum to one, since the total is then not a trace-one Wigner function.
+
+    Parameters
+    ----------
+    W_c, W_q   : (len(p_array), len(x_array)) real arrays
+    W_g        : callable W(x, p), or array of the same shape
+    p_c, p_q, p_g : scalar weights
+    x_array, p_array : 1-D coordinate arrays
+    array_tick : tick positions
+    title      : axes title string (False / '' to omit)
+    save       : filepath to save, or False
+    atol       : tolerance on the weight sum
+
+    Returns
+    -------
+    fig, im, W_sum
+    """
+    W_g_grid = Evaluate_Wigner_On_Grid(W_g, x_array, p_array)
+    W_sum = p_c*np.asarray(W_c) + p_q*np.asarray(W_q) + p_g*W_g_grid
+
+    total = p_c + p_q + p_g
+    if abs(total - 1.0) > atol:
+        warnings.warn(f"weights sum to {total:.6g}, not 1; the plotted total is not "
+                      f"normalised", RuntimeWarning, stacklevel=2)
+
+    fig, im = Plot_Wigner_GCS_Total(W_sum, x_array, p_array, array_tick, title, save)
+    return fig, im, W_sum
+
+
 def generate_pi_ticks(maximum, step):
     # Generate numerical array
     x_vals = np.arange(0, (maximum + 1) * step * np.pi, step * np.pi)
@@ -1015,21 +1152,19 @@ _COLORS_BLUE_3D  = ['lightskyblue', 'cornflowerblue', 'royalblue',  'blue',   'd
 _COLORS_RED_3D   = ['salmon',       'tomato',          'orangered',  'red',    'darkred']
 
 _INDEX_MAP_3D = [
-    ((0, 0), r"$r^{\mathrm{on}}_{+}$",  'real+'),
-    ((1, 1), r"$r^{\mathrm{on}}_{-}$",  'real-'),
+    ((1, 1), r"$r^{\mathrm{on}}_{+}$",  'real+'),
+    ((0, 0), r"$r^{\mathrm{on}}_{-}$",  'real-'),
     ((0, 1), r"$r^{\mathrm{off}}$",      'off'),
-    ((1, 0), r"$(r^{\mathrm{off}})^*$",  'off*'),
 ]
 
 _DEFAULT_COLOR_MAP_3D = {
     'real+': _COLORS_BLUE_3D[1],
     'real-': _COLORS_BLUE_3D[3],
     'off':   _COLORS_RED_3D[1],
-    'off*':  _COLORS_RED_3D[3],
 }
 
 # Pre-computed unit-sphere grids (module-level, reused for every ellipsoid)
-_N_LON_3D, _N_LAT_3D = 24, 12
+_N_LON_3D, _N_LAT_3D = 12, 5
 _u_sph_3d = np.linspace(0, 2*np.pi, 80)
 _v_sph_3d = np.linspace(0,   np.pi, 80)
 _LAT_V_3D = np.linspace(0, np.pi, _N_LAT_3D + 2)[1:-1]   # exclude poles
@@ -1137,7 +1272,7 @@ def _draw_vector_3d(ax, tip, color, lw=1.8, head_frac=0.12, alpha=1.0):
 
 
 def _draw_ellipsoid_3d(ax, cx, cy, cz, ax_x, ax_y, ax_z, color,
-                       surf_alpha=0.18, line_alpha=0.25, lw=0.5):
+                       surf_alpha=0.18, line_alpha=0.20, lw=0.7):
     """Draw an axis-aligned ellipsoid at (cx,cy,cz) with geodesic lines."""
     U, V = np.meshgrid(np.linspace(0, 2*np.pi, 40),
                        np.linspace(0,     np.pi, 20))
@@ -1157,6 +1292,12 @@ def _draw_ellipsoid_3d(ax, cx, cy, cz, ax_x, ax_y, ax_z, color,
                 cy + ax_y*np.sin(u0)*np.sin(_v_sph_3d),
                 cz + ax_z*np.cos(_v_sph_3d),
                 color=color, linewidth=lw, alpha=line_alpha)
+
+    # Outer contour: equatorial ring (widest cross-section, always at z=cz)
+    ax.plot(cx + ax_x*np.cos(_u_sph_3d),
+            cy + ax_y*np.sin(_u_sph_3d),
+            cz + np.zeros_like(_u_sph_3d),
+            color=color, linewidth=1.4, alpha=min(line_alpha * 4.0, 0.85), zorder=7)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1276,11 +1417,11 @@ def Draw_Vectors(ax, r_JK_t, t_idx, z_comp, color_map=None, alpha=1.0, add_legen
 
 
 def Draw_Ellipsoids(ax, r_JK_t, sigma_JK_t, t_idx, z_comp, color_map=None, alpha=1.0):
-    """Draw one axis-aligned ellipsoid per (j,k) entry at time t_idx.
+    """Draw one flat, axis-aligned ellipse per on-diagonal (j,j) branch at time t_idx.
 
-    Semi-axes = sqrt of relevant sigma_JK diagonal entries:
-      z_comp=0: ax_x=sqrt(Re[s00]), ax_y=sqrt(Re[s11]), ax_z=sqrt(Im[s00])
-      z_comp=1: ax_x=sqrt(Re[s00]), ax_y=sqrt(Re[s11]), ax_z=sqrt(Im[s11])
+    Off-diagonal entries are skipped here; draw them with Draw_Tilted_Pancake_3D.
+    sigma_JJ and r_JJ are physically real, so the ellipse lies in the z=0 plane
+    with semi-axes ax_x=sqrt(Re[s00]), ax_y=sqrt(Re[s11]), ax_z=0.
 
     Parameters
     ----------
@@ -1288,7 +1429,7 @@ def Draw_Ellipsoids(ax, r_JK_t, sigma_JK_t, t_idx, z_comp, color_map=None, alpha
     r_JK_t       : ndarray (T, 2, 2, 2, 1) complex
     sigma_JK_t   : ndarray (T, 2, 2, 2, 2) complex
     t_idx        : int — time index
-    z_comp       : 0 -> z = Im[x],  1 -> z = Im[p]
+    z_comp       : unused; kept for signature parity with the other Draw_* helpers
     color_map    : dict role->colour (uses _DEFAULT_COLOR_MAP_3D if None)
     alpha        : float in (0, 1] — overall opacity scale (default 1.0)
     """
@@ -1296,22 +1437,24 @@ def Draw_Ellipsoids(ax, r_JK_t, sigma_JK_t, t_idx, z_comp, color_map=None, alpha
         color_map = _DEFAULT_COLOR_MAP_3D
 
     for (j, k), label, role in _INDEX_MAP_3D:
+        if j != k:
+            continue
         color = color_map[role]
         vec   = r_JK_t[t_idx, j, k, :, 0]
-        # For off* (1,0) read the conjugate source (0,1) so Im has a consistent sign;
-        # take abs() because a semi-axis is a length, not a signed quantity.
-        sig_src = sigma_JK_t[t_idx, 0, 1] if role == 'off*' else sigma_JK_t[t_idx, j, k]
+        sig_src = sigma_JK_t[t_idx, j, k]
 
-        cx = vec[0].real
-        cy = vec[1].real
-        cz = vec[z_comp].imag
+        # On-diagonal covariance and first moment are physically real; take real
+        # parts explicitly so ODE numerical noise doesn't produce phantom z-tilt.
+        cx = float(np.real(vec[0]))
+        cy = float(np.real(vec[1]))
+        cz = 0.0
 
-        s00 = sig_src[0, 0]
-        s11 = sig_src[1, 1]
+        s00 = float(np.real(sig_src[0, 0]))
+        s11 = float(np.real(sig_src[1, 1]))
 
-        ax_x = _safe_sqrt_3d(s00.real, f"Re[sigma_00] ({role})")
-        ax_y = _safe_sqrt_3d(s11.real, f"Re[sigma_11] ({role})")
-        ax_z = np.sqrt(abs(s00.imag if z_comp == 0 else s11.imag))
+        ax_x = _safe_sqrt_3d(s00, f"Re[sigma_00] ({role})")
+        ax_y = _safe_sqrt_3d(s11, f"Re[sigma_11] ({role})")
+        ax_z = 0.0
 
         _draw_ellipsoid_3d(ax, cx, cy, cz, ax_x, ax_y, ax_z, color,
                            surf_alpha=0.18*alpha, line_alpha=0.25*alpha)
@@ -1432,45 +1575,51 @@ def transform_to_diagonal_frame(sigma_off, sigma_on_plus, sigma_on_minus,
 
 def Draw_Tilted_Pancake_3D(ax, center, sigma_off, z_comp=0, color='tomato',
                             alpha_fill=0.22, alpha_edge=0.8, n_pts=300,
-                            label=None, atol=1e-10):
-    """Draw the off-diagonal covariance as a tilted pancake (flat 2-D ellipse) in 3-D phase space.
+                            label=None, n_meridians=6, n_parallels=2):
+    """DEPRECATED -- superseded by Draw_Off_Diagonal_Tilt_3D / Plot_Off_Diagonal_3D.
 
-    Decomposes sigma_off = U Sigma U^T (n=1 only). Each principal axis j is tilted
-    by its polar phase phi_j toward the Im direction shown on the z-axis if j == z_comp;
-    otherwise it stays in the (Re[x], Re[p]) plane.
+    Kept intact while the new path is validated; do not build on it.  It differs from the
+    new path in two substantive ways: (a) its semi-axes go as sqrt(|Sigma_jj|), whereas the
+    exact construction needs a radial coordinate LINEAR in the matrix entry, so that the
+    xp-shadow is Re(b_j) and the tips are Im(b_j); (b) it lifts only the axis matching
+    z_comp, leaving the other in-plane, whereas both axes carry their own phase.
 
-    Semi-axis vectors:
-        e_j = sqrt(|Sigma_jj|) * [U[:,j]*cos(phi_j), sin(phi_j)]   if j == z_comp
-        e_j = sqrt(|Sigma_jj|) * [U[:,j], 0]                        otherwise
+    Draw the off-diagonal covariance as a tilted pancake (flat 2-D ellipse) in 3-D phase space.
 
-    Prints an error and returns without drawing if sigma_off is not real-diagonalizable.
+    sigma_off must be a 2×2 complex diagonal matrix (n=1 only). Magnitudes and phases
+    are read directly from the diagonal: Sigma_jj = |Sigma_jj| e^{i phi_j}.
+
+    Semi-axis vectors (axes aligned with canonical x/p since sigma_off is diagonal):
+        j == z_comp: e = sqrt(|S_jj|) * [cos(phi_j), 0, sin(phi_j)]  (x tilted toward Im)
+        j != z_comp: e = sqrt(|S_jj|) * [0, 1, 0]                    (p stays in-plane)
 
     Parameters
     ----------
-    ax         : Axes3D
-    center     : array-like (3,) — [cx, cy, cz] in (Re[x], Re[p], Im[x_z_comp]) coordinates
-    sigma_off  : (2, 2) complex — off-diagonal covariance matrix (n=1 only)
-    z_comp     : 0 -> Im[x] on z-axis,  1 -> Im[p] on z-axis
-    color      : face and edge colour
-    alpha_fill : face transparency (0–1)
-    alpha_edge : outline opacity (0–1)
-    n_pts      : number of perimeter sample points
-    label      : legend label string (None = no legend entry)
-    atol       : tolerance for the real-decomposition check
+    ax           : Axes3D
+    center       : array-like (3,) — [cx, cy, cz] in (Re[x], Re[p], Im[x_z_comp]) coordinates
+    sigma_off    : (2, 2) complex diagonal — off-diagonal covariance (n=1 only)
+    z_comp       : 0 -> Im[x] on z-axis,  1 -> Im[p] on z-axis
+    color        : face and edge colour
+    alpha_fill   : face transparency (0–1)
+    alpha_edge   : outline opacity (0–1)
+    n_pts        : number of perimeter sample points
+    label        : legend label string (None = no legend entry)
+    n_meridians  : number of diameter lines drawn through the center (world-map meridians)
+    n_parallels  : number of concentric scaled ellipses inside the pancake (latitudes)
     """
-    try:
-        U, _, magnitudes, phases = decompose_sigma_off_diagonal(sigma_off, atol=atol)
-    except ValueError as e:
-        print(f"[Draw_Tilted_Pancake_3D] Not plottable: {e}")
-        return
+    diag = np.array([sigma_off[0, 0], sigma_off[1, 1]])
+    magnitudes = np.abs(diag)
+    phases = np.angle(diag)
 
     cx, cy, cz = np.asarray(center, dtype=float)
     theta = np.linspace(0, 2 * np.pi, n_pts)
 
+    # U = I since sigma_off is diagonal: x-axis is j=0 (ux=1,up=0), p-axis is j=1 (ux=0,up=1)
     axes_3d = []
     for j in range(2):
         amp = np.sqrt(magnitudes[j])
-        ux, up = float(U[0, j]), float(U[1, j])
+        ux = 1.0 if j == 0 else 0.0
+        up = 0.0 if j == 0 else 1.0
         phi_j = phases[j]
         if j == z_comp:
             e = amp * np.array([ux * np.cos(phi_j), up * np.cos(phi_j), np.sin(phi_j)])
@@ -1488,11 +1637,707 @@ def Draw_Tilted_Pancake_3D(ax, center, sigma_off, z_comp=0, color='tomato',
                             facecolor=color, edgecolor='none', zorder=5)
     ax.add_collection3d(poly)
 
+    grid_alpha = 0.35 * alpha_edge
+    grid_lw = 0.7
+
+    # Meridians: n_meridians diameter lines through the center
+    for k in range(n_meridians):
+        alpha_m = k * np.pi / n_meridians
+        p1 = np.array([cx + e1[0]*np.cos(alpha_m) + e2[0]*np.sin(alpha_m),
+                       cy + e1[1]*np.cos(alpha_m) + e2[1]*np.sin(alpha_m),
+                       cz + e1[2]*np.cos(alpha_m) + e2[2]*np.sin(alpha_m)])
+        p2 = np.array([cx - e1[0]*np.cos(alpha_m) - e2[0]*np.sin(alpha_m),
+                       cy - e1[1]*np.cos(alpha_m) - e2[1]*np.sin(alpha_m),
+                       cz - e1[2]*np.cos(alpha_m) - e2[2]*np.sin(alpha_m)])
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]],
+                color=color, linewidth=grid_lw, alpha=grid_alpha, zorder=5)
+
+    # Parallels: n_parallels concentric scaled ellipses
+    for f in np.linspace(1.0 / (n_parallels + 1), n_parallels / (n_parallels + 1), n_parallels):
+        xs_p = cx + f * e1[0] * np.cos(theta) + f * e2[0] * np.sin(theta)
+        ys_p = cy + f * e1[1] * np.cos(theta) + f * e2[1] * np.sin(theta)
+        zs_p = cz + f * e1[2] * np.cos(theta) + f * e2[2] * np.sin(theta)
+        ax.plot(xs_p, ys_p, zs_p, color=color, linewidth=grid_lw, alpha=grid_alpha, zorder=5)
+
     lbl = label if label is not None else '_nolegend_'
     ax.plot(xs, ys, zs, color=color, linewidth=1.4, alpha=alpha_edge, label=lbl, zorder=6)
 
     ax.plot(xs, ys, np.full_like(zs, cz), '--',
             color=color, linewidth=0.8, alpha=0.4, zorder=4)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  COVARIANCE CONTOURS (2-D) AND THE OFF-DIAGONAL TILT (3-D)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def Covariance_Geometry(sigma, c=1.0, radial='sqrt', iso_tol=1e-12):
+    """Principal geometry of the level set xi^T sigma^-1 xi = c^2.
+
+    `sigma` is the covariance matrix itself, not its inverse, so more noise gives a
+    bigger contour.  With eigenvalues mu_plus >= mu_minus the semi-axes are c*sqrt(mu)
+    (radial='sqrt') and theta is measured from +x counter-clockwise to the MAJOR axis.
+
+    The paper fixes no contour level: it never draws a phase-space contour (no level-set
+    convention appears anywhere in it).  c is therefore a plotting choice, defaulting to
+    1, which makes the vacuum (sigma = 1, Sec. II) the unit circle.  The normalisation of
+    Eq.(wigner_general_gaussian) -- which integrates to 2^n, not 1 -- scales the height of
+    W_g and not this geometry, since sigma^-1 sits in the exponent either way.
+
+    Parameters
+    ----------
+    sigma   : (2, 2) real symmetric positive-definite
+    c       : contour level (see above)
+    radial  : 'sqrt'   -> semi-axes c*sqrt(mu), the standard quantum-optics contour;
+                          semi-axes are standard deviations, aspect ratio exp(2r).
+              'linear' -> semi-axes c*mu, the image of the unit circle under sigma.
+                          Radially commensurate with Draw_Off_Diagonal_Tilt_3D, but NOT
+                          a contour of the Wigner function: the aspect ratio becomes
+                          exp(4r), so a 10 dB state draws at 100 rather than 10, and the
+                          semi-axes are no longer standard deviations.
+    iso_tol : relative eigenvalue split below which the contour is called a circle
+
+    Returns
+    -------
+    dict with mu_plus, mu_minus, theta, semi_major, semi_minor, radial, is_isotropic
+    """
+    sigma = np.asarray(sigma, dtype=float)
+    T = (sigma[0, 0] + sigma[1, 1])/2
+    D = np.hypot((sigma[0, 0] - sigma[1, 1])/2, sigma[0, 1])
+    mu_plus = T + D
+    if mu_plus <= 0:
+        raise ValueError(f"sigma is not positive definite: largest eigenvalue {mu_plus}")
+    # via the determinant, not T - D, which cancels catastrophically past ~10 dB
+    mu_minus = float(np.linalg.det(sigma))/mu_plus
+
+    is_isotropic = (mu_plus - mu_minus)/(mu_plus + mu_minus) < iso_tol
+    # 0.5*atan2 already lands in (-pi/2, pi/2]; arctan would be ambiguous by pi/2 and
+    # would silently swap major and minor
+    theta = 0.0 if is_isotropic else 0.5*np.arctan2(2*sigma[0, 1], sigma[0, 0] - sigma[1, 1])
+
+    if radial == 'sqrt':
+        a, b = c*np.sqrt(mu_plus), c*np.sqrt(mu_minus)
+    elif radial == 'linear':
+        a, b = c*mu_plus, c*mu_minus
+    else:
+        raise ValueError(f"radial must be 'sqrt' or 'linear', got {radial!r}")
+
+    return dict(mu_plus=mu_plus, mu_minus=mu_minus, theta=float(theta),
+                semi_major=float(a), semi_minor=float(b),
+                radial=radial, c=c, is_isotropic=bool(is_isotropic))
+
+
+def Draw_Covariance_Contour(ax, sigma, centre=(0.0, 0.0), c=1.0, radial='sqrt',
+                            color='cornflowerblue', label=None, lw=1.6, alpha=1.0,
+                            fill_alpha=0.18, show_axes=False, show_vacuum=False,
+                            n_pts=400):
+    """Draw the phase-space contour of a real symmetric covariance matrix into `ax`.
+
+    Geometry and conventions are those of Covariance_Geometry, whose metadata dict is
+    returned so callers can assert on the geometry instead of re-deriving it.
+
+    Parameters
+    ----------
+    ax          : Axes (equal aspect is enforced here)
+    sigma       : (2, 2) real symmetric positive-definite
+    centre      : contour centre; the first moments do not move it
+    c, radial   : see Covariance_Geometry
+    show_axes   : draw the principal axes as line segments
+    show_vacuum : draw the dashed unit reference circle (vacuum, sigma = 1)
+    fill_alpha  : opacity of the filled interior (0 to leave it hollow)
+
+    Returns
+    -------
+    dict -- the Covariance_Geometry metadata
+    """
+    g = Covariance_Geometry(sigma, c=c, radial=radial)
+    t = np.linspace(0, 2*np.pi, n_pts)
+    ct, st = np.cos(g['theta']), np.sin(g['theta'])
+    xs = centre[0] + g['semi_major']*np.cos(t)*ct - g['semi_minor']*np.sin(t)*st
+    ys = centre[1] + g['semi_major']*np.cos(t)*st + g['semi_minor']*np.sin(t)*ct
+
+    if fill_alpha > 0:
+        ax.fill(xs, ys, color=color, alpha=fill_alpha, linewidth=0, zorder=2)
+
+    ax.plot(xs, ys, color=color, lw=lw, alpha=alpha,
+            label=label if label is not None else '_nolegend_', zorder=3)
+
+    if show_axes:
+        for length, u in ((g['semi_major'], (ct, st)), (g['semi_minor'], (-st, ct))):
+            ax.plot([centre[0] - length*u[0], centre[0] + length*u[0]],
+                    [centre[1] - length*u[1], centre[1] + length*u[1]],
+                    color=color, lw=0.8, alpha=0.7*alpha, zorder=3)
+    if show_vacuum:
+        ax.plot(centre[0] + np.cos(t), centre[1] + np.sin(t),
+                color='0.4', lw=0.8, ls='--', alpha=0.7, zorder=1,
+                label='vacuum' if label is not None else '_nolegend_')
+
+    ax.set_aspect('equal', adjustable='box')
+    return g
+
+
+def Covariance_Invariants(sigma, hbar=1.0):
+    """Symplectic invariants of a genuine (on-diagonal) covariance matrix.
+
+    The paper works in hbar = 1: the uncertainty relation is sigma + i Omega >= 0
+    (Sec. II), the vacuum is sigma = 1 and a thermal state sigma = (1 + 2 N_p) 1.
+
+    `physical` uses det(sigma) >= hbar^2, equivalent to sigma + i hbar Omega >= 0, and
+    NOT Var_x Var_p >= hbar^2/4, which is strictly weaker and passes unphysical states
+    once correlations are present -- exactly the conditional-rotation regime.
+
+    Returns
+    -------
+    dict with nu, purity, n_bar, r, S_dB, physical, det_sigma
+    """
+    g = Covariance_Geometry(sigma)
+    det = float(np.linalg.det(np.asarray(sigma, dtype=float)))
+    nu = np.sqrt(abs(det))
+    return dict(det_sigma=det, nu=float(nu), purity=float(hbar/nu),
+                n_bar=float((nu/hbar - 1)/2),
+                r=float(0.25*np.log(g['mu_plus']/g['mu_minus'])),
+                S_dB=float(-10*np.log10(g['mu_minus']/hbar)),   # 10, not 20: variance is power-like
+                physical=bool(det >= hbar**2*(1 - 1e-12)),   # relative: scales with hbar
+                mu_plus=g['mu_plus'], mu_minus=g['mu_minus'], theta=g['theta'],
+                is_isotropic=g['is_isotropic'])
+
+
+def Plot_On_Diagonal_Contours(sigma_on_plus, sigma_on_minus, c=1.0, radial='sqrt', sym_lim=None,
+                              r_on_plus=None, r_on_minus=None, hbar=1.0,
+                              color_map=None, title="", annotate=True,
+                              show_vacuum=True, show_axes=False, fill_alpha=0.18,
+                              figsize=(5.2, 5.2), save=False):
+    """Figure 1: the two on-diagonal covariance contours, overlaid at the origin.
+
+    Overlaid in one axis rather than side by side, matching Plot_Diagonal_Multi_Time_2D
+    and Plot_Phase_Space_Summary -- the existing 2-D views of the same two objects -- and
+    reusing their colours from _DEFAULT_COLOR_MAP_3D.
+
+    Both contours are centred at the origin.  Non-zero first moments are drawn as markers
+    only and their offset is reported in the annotation; they do not move the contours.
+
+    Physicality is reported as a warning carrying the number, not an exception: fed the
+    vacuum it must give det(sigma) = hbar^2 exactly, so a stray factor of 2 or a
+    sigma-vs-V mix-up shows up immediately.
+
+    Returns
+    -------
+    fig, ax, info -- info['+'] and info['-'] hold Covariance_Invariants for each branch
+    """
+    rcParams['mathtext.fontset'] = 'cm'
+    rcParams['font.family'] = 'STIXGeneral'
+    if color_map is None:
+        color_map = _DEFAULT_COLOR_MAP_3D
+
+    fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=200)
+    info, lim = {}, 0.0
+    for key, sig, rvec, role, lbl in (
+            ('+', sigma_on_plus,  r_on_plus,  'real+', r"$\sigma^{\mathrm{on}}_{+}$"),
+            ('-', sigma_on_minus, r_on_minus, 'real-', r"$\sigma^{\mathrm{on}}_{-}$")):
+        inv = Covariance_Invariants(sig, hbar=hbar)
+        g = Draw_Covariance_Contour(ax, sig, c=c, radial=radial,
+                                    color=color_map[role], label=lbl,
+                                    show_axes=show_axes, fill_alpha=fill_alpha,
+                                    show_vacuum=(show_vacuum and key == '+'))
+        inv.update(g)
+        if not inv['physical']:
+            warnings.warn(f"branch {key}: det(sigma) = {inv['det_sigma']:.6g} < hbar^2 = "
+                          f"{hbar**2:.6g}; state is unphysical", RuntimeWarning, stacklevel=2)
+        if rvec is not None:
+            rv = np.asarray(rvec, dtype=float).ravel()
+            ax.plot(rv[0], rv[1], marker='o', ms=4, color=color_map[role], zorder=4)
+            inv['r_offset'] = rv
+            lim = max(lim, float(np.max(np.abs(rv))))
+        info[key] = inv
+
+        if sym_lim== None:
+            sym_lim = max(lim, g['semi_major'])
+            sym_lim *= 1.35
+   
+    
+    ax.set_xlim(-sym_lim, sym_lim); ax.set_ylim(-sym_lim, sym_lim)
+
+    ax.axhline(0, color='0.6', lw=0.5, zorder=0)
+    ax.axvline(0, color='0.6', lw=0.5, zorder=0)
+    ax.set_xlabel(r'Position, $x$', fontsize=11)
+    ax.set_ylabel(r'Momentum, $p$', fontsize=11)
+    if title:
+        ax.set_title(title, fontsize=12)
+    ax.legend(fontsize=8, loc='upper right', framealpha=0.8)
+
+    if annotate:
+        for i, (key, inv) in enumerate(info.items()):
+            txt = (rf"${key}$:  $({inv['semi_major']:.3f},\,{inv['semi_minor']:.3f})$, "
+                   rf"$\theta={np.degrees(inv['theta']):.1f}^\circ$, "
+                   rf"$\mu={inv['purity']:.3f}$, ${inv['S_dB']:.2f}$ dB")
+            if 'r_offset' in inv:
+                txt += rf", $\bar r=({inv['r_offset'][0]:.2f},{inv['r_offset'][1]:.2f})$"
+            ax.text(0.02, 0.02 + 0.055*i, txt, transform=ax.transAxes, fontsize=7)
+        ax.text(0.02, 0.02 + 0.055*len(info),
+                rf"radial='{radial}', $c={c:g}$", transform=ax.transAxes, fontsize=7)
+
+    fig.tight_layout()
+    if save:
+        plt.savefig(save, bbox_inches='tight', transparent=True)
+    return fig, ax, info
+
+
+def Off_Diagonal_Polar(sigma_off, tol=1e-10, use_inverse=True):
+    """Polar decomposition of a diagonal complex off-diagonal block, b_j = zeta_j e^{i psi_j}.
+
+    `use_inverse` selects which object is decomposed, and it matters: inverting a diagonal
+    entry sends zeta -> 1/zeta and psi -> -psi, reversing every tilt.
+
+      True  (default) -- decompose sigma_off^-1, consistent with the on-diagonal contours
+                         of Draw_Covariance_Contour, whose level set xi^T sigma^-1 xi = c^2
+                         is likewise built on the inverse, and with the paper's geometry
+                         section, which works throughout with
+                         sigma^{off -1} = sigma_R^-1 + i sigma_I^-1 (after Eq. wigner_jk).
+      False           -- decompose sigma_off itself, i.e. the entries as they appear in
+                         Eq.(cov_rotation).
+
+    Returns None (after printing) if sigma_off is not diagonal to `tol`, measured as
+    (|s01| + |s10|)/||sigma_off||_F.  Symmetry (s01 == s10) is checked separately: it is a
+    different property from diagonality and a different bug if it fails.
+
+    Normalisability of Eq.(wigner_jk) forces Re(sigma_off^-1) > 0.  With use_inverse=True
+    that is directly cos(psi_j) > 0; either way psi_j lies in (-pi/2, pi/2), where the tilt
+    of Draw_Off_Diagonal_Tilt_3D is injective, so no orientation marker or mod-pi
+    disambiguation is needed.
+    """
+    sigma_off = np.asarray(sigma_off, dtype=complex)
+    fro = np.linalg.norm(sigma_off, 'fro')
+
+    # Symmetry is checked BEFORE the diagonality gate, and against a numerical-equality
+    # tolerance rather than `tol`.  Ordered the other way it can never fire: passing the
+    # gate means |s01| + |s10| <= tol*fro, which by the triangle inequality forces
+    # |s01 - s10| <= tol*fro, so the condition is unsatisfiable exactly when it is reached.
+    # It is a different property from diagonality -- a Hermitian block passed in place of a
+    # complex-symmetric one has s10 = conj(s01) -- and a different bug.
+    if abs(sigma_off[0, 1] - sigma_off[1, 0]) > 1e-12*max(fro, 1.0):
+        warnings.warn("sigma_off is not symmetric (s01 != s10); it should be complex "
+                      "symmetric, not Hermitian", RuntimeWarning, stacklevel=2)
+
+    ratio = (abs(sigma_off[0, 1]) + abs(sigma_off[1, 0]))/fro if fro > 0 else 0.0
+    if ratio > tol:
+        print(f"sigma_off is not diagonal and cannot be computed (ratio = {ratio:.3e})")
+        return None
+
+    diag = np.array([sigma_off[0, 0], sigma_off[1, 1]])
+    if use_inverse:
+        if np.min(np.abs(diag)) == 0:
+            print("sigma_off has a zero diagonal entry and cannot be inverted")
+            return None
+        diag = 1.0/diag                     # diagonal, so this is the matrix inverse
+    zeta = np.abs(diag)
+    psi = np.arctan2(diag.imag, diag.real)
+    for j, p in enumerate(psi):
+        if np.cos(p) <= 0:
+            warnings.warn(f"psi_{'xp'[j]} = {np.degrees(p):.2f} deg has cos <= 0; "
+                          f"Eq.(wigner_jk) is not normalisable there", RuntimeWarning,
+                          stacklevel=2)
+    return dict(zeta_x=float(zeta[0]), zeta_p=float(zeta[1]),
+                psi_x=float(psi[0]), psi_p=float(psi[1]), ratio=float(ratio),
+                use_inverse=bool(use_inverse), b_x=complex(diag[0]), b_p=complex(diag[1]))
+
+
+def Draw_Off_Diagonal_Tilt_3D(ax, sigma_off, color='tomato', tol=1e-10,
+                              n_pts=400, label=None, use_inverse=True,
+                              alpha_fill=0.22, n_meridians=6, n_parallels=2,
+                              show_plane_intersection=True, rim_lw=1.4):
+    """Draw the diagonal off-diagonal block as two tilted semi-axis vectors in (x, p, z).
+
+    The decomposed object is sigma_off^-1 by default (see Off_Diagonal_Polar); writing its
+    diagonal entries as b_j = zeta_j e^{i psi_j}, the semi-axis vectors are
+
+        u = zeta_x (cos psi_x, 0, sin psi_x)      # x semi-axis, lifted by psi_x
+        v = zeta_p (0, cos psi_p, sin psi_p)      # p semi-axis, lifted by psi_p
+
+    and the drawn curve is {u cos t + v sin t}.  The radial coordinate is LINEAR in the
+    matrix entry -- zeta_j, not sqrt(zeta_j) -- which is what makes the picture exact:
+    the shadow on the xp-plane has semi-axes zeta_j cos psi_j = Re(b_j) and the arrow tips
+    sit at height zeta_j sin psi_j = Im(b_j).  Using sqrt(zeta_j) would break the first
+    identity, since sqrt(zeta) cos(psi) != sqrt(zeta cos psi).
+
+    u . v = zeta_x zeta_p sin(psi_x) sin(psi_p) vanishes only if a phase is zero, so with
+    both non-zero the lift is a SHEAR, not a rotation: the ellipse's apparent proportions
+    are an artefact and it is drawn only as a guide to the eye.  The arrows carry the
+    numbers.  The disc is filled and ruled with meridians and parallels, in the style of
+    Draw_Tilted_Pancake_3D, so that its orientation in space is readable.
+
+    No xp-plane shadow is drawn.  The vertical projection of the curve does have semi-axes
+    exactly Re(b_j) -- that identity still holds and is worth checking numerically -- but on
+    screen the eye compares it against the camera silhouette, which is a different
+    projection, so drawing it without projection lines only misleads.
+
+    `show_plane_intersection` draws instead the disc's INTERSECTION with the xp-plane, as a
+    dashed chord in the rim's own colour and width.  Unlike a projection this is exact and
+    unambiguous: it is the set of disc points that genuinely have z = 0.  Along the rim
+    z(t) = Im(b_x) cos t + Im(b_p) sin t, which vanishes at t0 = atan2(-Im b_x, Im b_p) and
+    at t0 + pi; the disc is centred on the origin and the plane passes through that centre,
+    so the intersection is the full diameter between those two antipodal rim points.  When
+    both phases vanish the disc already lies in the plane and nothing is drawn.
+
+    Dimensional honesty: with one vertical axis, non-zero psi_x and psi_p means a genuinely
+    4-D object (Re x, Im x, Re p, Im p) is being projected into 3-D.
+
+    Returns
+    -------
+    dict from Off_Diagonal_Polar, plus u, v -- or None if sigma_off is not diagonal.
+    """
+    pol = Off_Diagonal_Polar(sigma_off, tol=tol, use_inverse=use_inverse)
+    if pol is None:
+        return None
+
+    u = pol['zeta_x']*np.array([np.cos(pol['psi_x']), 0.0, np.sin(pol['psi_x'])])
+    v = pol['zeta_p']*np.array([0.0, np.cos(pol['psi_p']), np.sin(pol['psi_p'])])
+    t = np.linspace(0, 2*np.pi, n_pts)
+    curve = np.outer(np.cos(t), u) + np.outer(np.sin(t), v)
+
+    # filled interior of the disc
+    ax.add_collection3d(Poly3DCollection([curve], alpha=alpha_fill, facecolor=color,
+                                         edgecolor='none', zorder=4))
+
+    # meridians and parallels, as in Draw_Tilted_Pancake_3D, so the tilt is readable
+    grid_alpha, grid_lw = 0.35, 0.7
+    for k in range(n_meridians):
+        a_m = k*np.pi/n_meridians
+        p1, p2 = u*np.cos(a_m) + v*np.sin(a_m), -(u*np.cos(a_m) + v*np.sin(a_m))
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]],
+                color=color, linewidth=grid_lw, alpha=grid_alpha, zorder=5)
+    for f in np.linspace(1.0/(n_parallels + 1), n_parallels/(n_parallels + 1), n_parallels):
+        ring = f*curve
+        ax.plot(ring[:, 0], ring[:, 1], ring[:, 2],
+                color=color, linewidth=grid_lw, alpha=grid_alpha, zorder=5)
+
+    # the rim: a guide to the eye only (see the shear note above)
+    ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], color=color, lw=rim_lw, alpha=0.9,
+            zorder=6, label=label if label is not None else '_nolegend_')
+
+    # where the tilted disc actually crosses the xp-plane
+    if show_plane_intersection:
+        u_z, v_z = u[2], v[2]                       # = Im(b_x), Im(b_p)
+        if max(abs(u_z), abs(v_z)) > tol:
+            t0 = np.arctan2(-u_z, v_z)
+            w = u*np.cos(t0) + v*np.sin(t0)
+            ax.plot([-w[0], w[0]], [-w[1], w[1]], [-w[2], w[2]],
+                    color=color, lw=rim_lw, ls='--', alpha=0.9, zorder=7)
+            pol['plane_intersection'] = np.array([-w, w])
+
+    for vec in (u, v):
+        _draw_vector_3d(ax, vec, color, lw=2.0)
+
+    pol['u'], pol['v'] = u, v
+    return pol
+
+
+def Plot_Off_Diagonal_3D(sigma_off, sym_lim=None, color=None, title="",
+                         tol=1e-10, annotate=True, use_inverse=True,
+                         alpha_fill=0.22, n_meridians=6, n_parallels=2,
+                         show_plane_intersection=True,
+                         figsize=(10, 10), elev=22, azim=-55, save=False):
+    """Figure 2: the off-diagonal block in 3-D, in the style of Plot_3D_Diagonal_Sigma.
+
+    Scene, axis decoration, plane shading and arrow style are those of
+    Plot_3D_Diagonal_Sigma / _make_scene_3d / _setup_axes_decoration_3d.  The vertical
+    axis carries the imaginary part of both semi-axes at once -- see the docstring of
+    Draw_Off_Diagonal_Tilt_3D for what that projection costs.
+
+    Returns
+    -------
+    fig, ax, info  (info is None if sigma_off is not diagonal to `tol`)
+    """
+    rcParams['mathtext.fontset'] = 'cm'
+    rcParams['font.family'] = 'STIXGeneral'
+    if color is None:
+        color = _DEFAULT_COLOR_MAP_3D['off']
+
+    pol = Off_Diagonal_Polar(sigma_off, tol=tol, use_inverse=use_inverse)
+    if pol is None:
+        return None, None, None
+
+    if sym_lim is None:
+        m = 1.45*max(pol['zeta_x'], pol['zeta_p'])
+        sym_lim = (-m, m)
+
+    fig, ax = _make_scene_3d(sym_lim, figsize=figsize, elev=elev, azim=azim)
+    Draw_XY_Plane(ax, sym_lim)
+    lbl = (r'$(\sigma^{\mathrm{off}})^{-1}$' if use_inverse
+           else r'$\sigma^{\mathrm{off}}$')
+    info = Draw_Off_Diagonal_Tilt_3D(ax, sigma_off, color=color, tol=tol,
+                                     use_inverse=use_inverse, label=lbl,
+                                     alpha_fill=alpha_fill, n_meridians=n_meridians,
+                                     n_parallels=n_parallels,
+                                     show_plane_intersection=show_plane_intersection)
+    _setup_axes_decoration_3d(ax, sym_lim,
+                              xlabel=r"$\mathrm{Re}[x]$", ylabel=r"$\mathrm{Re}[p]$",
+                              zlabel=(r"$\mathrm{Im}[(\sigma^{\mathrm{off}})^{-1}]$"
+                                      if use_inverse else r"$\mathrm{Im}[\sigma^{\mathrm{off}}]$"))
+    if title:
+        ax.set_title(title, fontsize=15, y=0.85)
+    if annotate:
+        ax.text2D(0.02, 0.02,
+                  rf"$\zeta_x={info['zeta_x']:.4f}$,  $\zeta_p={info['zeta_p']:.4f}$,  "
+                  rf"$\psi_x={np.degrees(info['psi_x']):.2f}^\circ$,  "
+                  rf"$\psi_p={np.degrees(info['psi_p']):.2f}^\circ$",
+                  transform=ax.transAxes, fontsize=11)
+    if save:
+        plt.savefig(save, bbox_inches='tight')
+    return fig, ax, info
+
+
+def Draw_Covariance_Contour_3D(ax, sigma, centre=(0.0, 0.0), z=0.0, c=1.0,
+                               radial='sqrt', color='cornflowerblue', label=None,
+                               lw=1.6, alpha=1.0, fill_alpha=0.16, n_pts=240):
+    """Draw an on-diagonal covariance contour into a 3-D scene, in the plane Im = `z`.
+
+    The 3-D companion of Draw_Covariance_Contour, sharing its geometry through
+    Covariance_Geometry, so the two views of the same sigma agree by construction.
+
+    Only the ON-DIAGONAL blocks belong here: sigma_JJ is real symmetric, so its contour is
+    a genuine ellipse in the real phase plane and is drawn at z = 0 -- exactly where
+    Draw_First_Moments_3D puts the matching on-diagonal arrow.  The off-diagonal block is
+    complex and not Hermitian; its geometry is a tilted disc and is handled separately by
+    Draw_Off_Diagonal_Tilt_3D.
+
+    Parameters
+    ----------
+    ax          : 3-D Axes
+    sigma       : (2, 2) real symmetric positive-definite
+    centre      : (x, p) centre -- pass the branch first moment to sit the contour on the
+                  tip of its arrow, or (0, 0) to centre it at the origin
+    z           : height of the plane holding the contour
+    c, radial   : see Covariance_Geometry
+    fill_alpha  : opacity of the filled interior (0 to leave it hollow)
+
+    Returns
+    -------
+    dict -- the Covariance_Geometry metadata
+    """
+    g = Covariance_Geometry(sigma, c=c, radial=radial)
+    t = np.linspace(0, 2*np.pi, n_pts)
+    ct, st = np.cos(g['theta']), np.sin(g['theta'])
+    xs = centre[0] + g['semi_major']*np.cos(t)*ct - g['semi_minor']*np.sin(t)*st
+    ys = centre[1] + g['semi_major']*np.cos(t)*st + g['semi_minor']*np.sin(t)*ct
+    zs = np.full_like(xs, float(z))
+
+    if fill_alpha > 0:
+        ax.add_collection3d(Poly3DCollection(
+            [list(zip(xs, ys, zs))], alpha=fill_alpha, facecolor=color,
+            edgecolor='none', zorder=3))
+    ax.plot(xs, ys, zs, color=color, lw=lw, alpha=alpha, zorder=6,
+            label=label if label is not None else '_nolegend_')
+    return g
+
+
+def Draw_First_Moments_3D(ax, r_on_plus=None, r_on_minus=None, r_off=None, z_comp=0,
+                          color_map=None, show_projections=True, lw=2.0,
+                          sigma_on_plus=None, sigma_on_minus=None, c=1.0,
+                          radial='sqrt', contour_fill_alpha=0.16):
+    """Draw the first moments in (x, p, z), with z carrying one imaginary component.
+
+    The on-diagonal moments are real, so each is one in-plane arrow to the phase-space
+    point (Re r_x, Re r_p, 0).  Nothing is lost: that is exactly where the branch Gaussian
+    sits.
+
+    The off-diagonal moment is complex and is drawn as a SINGLE arrow to
+
+        (Re r^off_x,  Re r^off_p,  Im r^off_[z_comp])
+
+    the same convention as Draw_Vectors.  Its in-plane part is the paper's envelope centre
+    r_R (Sec. 6, after Eq. wigner_jk).  One arrow can only carry one imaginary component,
+    so the other is not shown -- `z_comp` selects which, exactly as elsewhere in this
+    library, and Plot_First_Moments_3D reports the omitted one in its annotation.
+
+    `show_projections` draws, for the off-diagonal arrow only: the drop from the tip to the
+    xp-plane and the in-plane projection vector, and the line from the tip across to
+    Im r^off_[z_comp] on the z axis.
+
+    `sigma_on_plus` / `sigma_on_minus` optionally add the ON-DIAGONAL covariance contour of
+    each branch, centred on the tip of that branch's arrow and lying in the z = 0 plane --
+    the Gaussian each moment is the centre of.  Only the on-diagonal blocks are accepted:
+    they are the real symmetric ones, so the contour is a true ellipse in the real phase
+    plane.  Pass them in the SAME frame as the moments; if the moments were rotated into a
+    driving frame by R, the covariances must be rotated as R sigma R^T.
+
+    Returns
+    -------
+    dict of the drawn tip vectors, plus 'geom+'/'geom-' when contours were drawn
+    """
+    if color_map is None:
+        color_map = _DEFAULT_COLOR_MAP_3D
+    out = {}
+
+    for key, vec, sig, role, lbl in (
+            ('+', r_on_plus,  sigma_on_plus,  'real+', r"$\bar{r}^{\mathrm{on}}_{+}$"),
+            ('-', r_on_minus, sigma_on_minus, 'real-', r"$\bar{r}^{\mathrm{on}}_{-}$")):
+        if vec is None:
+            continue
+        v = np.asarray(vec, dtype=complex).ravel()
+        tip = np.array([v[0].real, v[1].real, 0.0])
+        ax.plot([], [], [], color=color_map[role], lw=lw, label=lbl)
+        _draw_vector_3d(ax, tip, color_map[role], lw=lw)
+        out[key] = tip
+        if sig is not None:
+            # centred on the arrow tip: the branch Gaussian sits at its own first moment
+            out['geom' + key] = Draw_Covariance_Contour_3D(
+                ax, sig, centre=tip[:2], z=0.0, c=c, radial=radial,
+                color=color_map[role], lw=1.4, alpha=0.95,
+                fill_alpha=contour_fill_alpha,
+                label=rf"$\sigma^{{\mathrm{{on}}}}_{{{key}}}$")
+
+    if r_off is not None:
+        v = np.asarray(r_off, dtype=complex).ravel()
+        col = color_map['off']
+        tip = np.array([v[0].real, v[1].real, v[z_comp].imag])
+        ax.plot([], [], [], color=col, lw=lw, label=r"$\bar{r}^{\mathrm{off}}$")
+        _draw_vector_3d(ax, tip, col, lw=lw)
+        out['off'] = tip
+
+        if show_projections:
+            foot = np.array([tip[0], tip[1], 0.0])          # xp-plane projection
+            zpt = np.array([0.0, 0.0, tip[2]])              # imaginary part on the z axis
+            for a, b in ((tip, foot), (tip, zpt)):
+                ax.plot([a[0], b[0]], [a[1], b[1]], [a[2], b[2]],
+                        color=col, lw=0.9, ls=':', alpha=0.75, zorder=8)
+            ax.plot([0.0, foot[0]], [0.0, foot[1]], [0.0, 0.0],
+                    color=col, lw=1.1, alpha=0.55, zorder=8)
+            ax.plot([0.0, 0.0], [0.0, 0.0], [0.0, zpt[2]],
+                    color=col, lw=1.1, alpha=0.55, zorder=8)
+            out['proj_plane'], out['proj_z'] = foot, zpt
+    return out
+
+
+def Draw_First_Moment_Curves_3D(ax, r_on_plus_t=None, r_on_minus_t=None, r_off_t=None,
+                                z_comp=0, color_map=None, lw=1.4, alpha=0.6,
+                                arrowheads=True, mark_end=True):
+    """Draw first-moment trajectories in (x, p, z), ending at the last sample.
+
+    Same conventions as Draw_First_Moments_3D -- on-diagonal moments are real and lie in
+    the plane, the off-diagonal one is a single curve whose height is Im r^off_[z_comp] --
+    and the same directional-arrowhead style as Draw_Curves.
+
+    Each argument is a (T, 2) complex time series.  The final point is where the arrows of
+    Draw_First_Moments_3D sit, so a steady-state run ends exactly on them.
+
+    Returns
+    -------
+    dict of the end points actually drawn
+    """
+    if color_map is None:
+        color_map = _DEFAULT_COLOR_MAP_3D
+    out = {}
+
+    series = (('+', r_on_plus_t,  'real+', r"$\bar{r}^{\mathrm{on}}_{+}(\tau)$"),
+              ('-', r_on_minus_t, 'real-', r"$\bar{r}^{\mathrm{on}}_{-}(\tau)$"),
+              ('off', r_off_t,    'off',   r"$\bar{r}^{\mathrm{off}}(\tau)$"))
+    for key, arr, role, lbl in series:
+        if arr is None:
+            continue
+        a = np.asarray(arr, dtype=complex)
+        rx, rp = a[:, 0].real, a[:, 1].real
+        z = a[:, z_comp].imag if key == 'off' else np.zeros(len(a))
+        col = color_map[role]
+        ax.plot(rx, rp, z, color=col, linewidth=lw, alpha=alpha, label=lbl, zorder=6)
+
+        if arrowheads and len(a) > 3:
+            for frac in (1/3, 2/3):
+                i = max(1, min(int(round(frac*(len(a) - 1))), len(a) - 2))
+                d = np.array([rx[i] - rx[i-1], rp[i] - rp[i-1], z[i] - z[i-1]])
+                n = np.linalg.norm(d)
+                if n < 1e-12:
+                    continue
+                _triangle_arrowhead_3d(ax, np.array([rx[i], rp[i], z[i]]), d/n,
+                                       head_len=0.3, head_width=0.3, color=col)
+        end = np.array([rx[-1], rp[-1], z[-1]])
+        if mark_end:
+            ax.scatter([end[0]], [end[1]], [end[2]], color=col, s=18, marker='o',
+                       depthshade=False, zorder=11)
+        out[key] = end
+    return out
+
+
+def Plot_First_Moments_3D(r_on_plus=None, r_on_minus=None, r_off=None, z_comp=0,
+                          sym_lim=None, color_map=None, title="", show_projections=True,
+                          annotate=True, trajectories=None, reference=None,
+                          reference_label=None, sigma_on_plus=None, sigma_on_minus=None,
+                          c=1.0, radial='sqrt', contour_fill_alpha=0.16,
+                          figsize=(10, 10), elev=22, azim=-55, save=False):
+    """Figure: the first moments in 3-D, in the style of Plot_Off_Diagonal_3D.
+
+    z_comp selects which imaginary component the vertical axis carries, 0 -> Im[x],
+    1 -> Im[p], as in Draw_Vectors and _finalise_3d.  See Draw_First_Moments_3D.
+
+    `trajectories` is an optional (r_on_plus_t, r_on_minus_t, r_off_t) of (T, 2) time
+    series, drawn by Draw_First_Moment_Curves_3D; their last sample coincides with the
+    arrows, so a run to the steady state ends exactly on them.
+
+    `reference` is an optional in-plane 2-vector drawn as a thin dashed arrow -- e.g. the
+    driving d, when the moments are expressed in a frame referenced to it.
+
+    `sigma_on_plus` / `sigma_on_minus` add each branch's ON-DIAGONAL covariance contour,
+    centred on the tip of its arrow in the z = 0 plane.  They must be given in the same
+    frame as the moments -- in a driving frame that means R sigma R^T, not sigma.  See
+    Draw_First_Moments_3D.
+    """
+    rcParams['mathtext.fontset'] = 'cm'
+    rcParams['font.family'] = 'STIXGeneral'
+
+    vecs = [np.asarray(v, dtype=complex).ravel()
+            for v in (r_on_plus, r_on_minus, r_off) if v is not None]
+    if trajectories is not None:
+        vecs += [np.asarray(t, dtype=complex).ravel() for t in trajectories if t is not None]
+    if reference is not None:
+        vecs.append(np.asarray(reference, dtype=complex).ravel())
+    if sym_lim is None:
+        m = 1.45*max(float(np.max(np.abs(np.concatenate([v.real, v.imag])))) for v in vecs)
+        # a contour drawn on an arrow tip reaches beyond it by its own semi-major axis
+        for sig, ctr in ((sigma_on_plus, r_on_plus), (sigma_on_minus, r_on_minus)):
+            if sig is None:
+                continue
+            g = Covariance_Geometry(sig, c=c, radial=radial)
+            reach = float(np.max(np.abs(np.asarray(ctr, dtype=complex).ravel().real))) \
+                if ctr is not None else 0.0
+            m = max(m, 1.15*(reach + g['semi_major']))
+        sym_lim = (-m, m)
+
+    fig, ax = _make_scene_3d(sym_lim, z_comp=z_comp, figsize=figsize, elev=elev, azim=azim)
+    Draw_XY_Plane(ax, sym_lim)
+    if trajectories is not None:
+        Draw_First_Moment_Curves_3D(ax, *trajectories, z_comp=z_comp, color_map=color_map)
+    if reference is not None:
+        ref = np.asarray(reference, dtype=float).ravel()
+        ax.plot([0.0, ref[0]], [0.0, ref[1]], [0.0, 0.0], color='0.35', lw=1.4, ls='--',
+                alpha=0.9, zorder=9,
+                label=reference_label if reference_label is not None else '_nolegend_')
+    info = Draw_First_Moments_3D(ax, r_on_plus, r_on_minus, r_off, z_comp=z_comp,
+                                 color_map=color_map, show_projections=show_projections,
+                                 sigma_on_plus=sigma_on_plus,
+                                 sigma_on_minus=sigma_on_minus,
+                                 c=c, radial=radial,
+                                 contour_fill_alpha=contour_fill_alpha)
+    _setup_axes_decoration_3d(ax, sym_lim,
+                              xlabel=r"$\mathrm{Re}[x]$", ylabel=r"$\mathrm{Re}[p]$",
+                              zlabel=(r"$\mathrm{Im}[x]$" if z_comp == 0
+                                      else r"$\mathrm{Im}[p]$"))
+    if title:
+        ax.set_title(title, fontsize=15, y=0.85)
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        # lower than _finalise_3d's default: with trajectories this legend carries up to
+        # eight entries, which at y = 0.3 sits on top of the scene
+        fig.legend(handles, labels, loc='lower center', ncol=4, fontsize=12,
+                   framealpha=0.7, bbox_to_anchor=(0.5, 0.12 if trajectories else 0.3))
+    if annotate and r_off is not None:
+        v = np.asarray(r_off, dtype=complex).ravel()
+        other = 1 - z_comp
+        ax.text2D(0.02, 0.02,
+                  rf"$\bar{{r}}^{{\mathrm{{off}}}}=({v[0].real:.4f}{v[0].imag:+.4f}i,\ "
+                  rf"{v[1].real:.4f}{v[1].imag:+.4f}i)$;  "
+                  rf"not shown: $\mathrm{{Im}}[{'xp'[other]}]={v[other].imag:.4f}$",
+                  transform=ax.transAxes, fontsize=11)
+    if save:
+        plt.savefig(save, bbox_inches='tight')
+    return fig, ax, info
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1650,11 +2495,10 @@ def Plot_3D_Diagonal_Sigma(r_JK_t, sigma_JK_t, t_idx, z_comp=0,
     """3-D phase-space snapshot: on-diagonal ellipsoids + off-diagonal tilted pancake.
 
     Draws first-moment vectors and uncertainty ellipsoids for the on-diagonal
-    branches (j=k), then decomposes the off-diagonal covariance σ^off = U Σ U^T
-    and draws it as a flat pancake tilted by the polar phases of Σ.
+    branches (j=k), then draws σ^off as a flat pancake whose semi-axes are tilted
+    by the polar phases of its diagonal entries.
 
-    Silently skips the pancake if σ^off is not real-diagonalizable
-    (error message printed by Draw_Tilted_Pancake_3D).
+    sigma_JK_t[t_idx, 0, 1] must be a 2×2 complex diagonal matrix.
 
     Parameters
     ----------
@@ -1796,8 +2640,8 @@ def Plot_Diagonal_Multi_Time_2D(r_JK_t, sigma_JK_t, t_idx_array, alpha_array,
 
     N2 = r_JK_t.shape[1]
     if N2 == 2:
-        diag_map = [((0, 0), r"$r^{\mathrm{on}}_{+}$", color_map['real+']),
-                    ((1, 1), r"$r^{\mathrm{on}}_{-}$", color_map['real-'])]
+        diag_map = [((1, 1), r"$r^{\mathrm{on}}_{+}$", color_map['real+']),
+                    ((0, 0), r"$r^{\mathrm{on}}_{-}$", color_map['real-'])]
     else:
         _tab = plt.cm.get_cmap('tab10')
         diag_map = [((j, j), f'$J_{{{j}}}$', _tab(j % 10)) for j in range(N2)]
@@ -1906,8 +2750,8 @@ def Plot_Phase_Space_Summary(r_JK_t, sigma_JK_t, t_idx_array, alpha_array,
     # ── diagonal branch map (color + label) ───────────────────────────────────
     N2 = r_JK_t.shape[1]
     if N2 == 2:
-        diag_map = [((0, 0), r"$r^{\mathrm{on}}_{+}$", color_map['real+']),
-                    ((1, 1), r"$r^{\mathrm{on}}_{-}$", color_map['real-'])]
+        diag_map = [((1, 1), r"$r^{\mathrm{on}}_{+}$", color_map['real+']),
+                    ((0, 0), r"$r^{\mathrm{on}}_{-}$", color_map['real-'])]
     else:
         _tab = plt.cm.get_cmap('tab10')
         diag_map = [((j, j), f'$J_{{{j}}}$', _tab(j % 10)) for j in range(N2)]
@@ -2062,3 +2906,173 @@ def Animate_Vectors_Ellipsoids_Single(r_JK_t, sigma_JK_t, z_comp=0,
     if save:
         ani.save(filename=save, writer="pillow")
     return ani
+
+
+def Animate_Gaussian_Trajectory(wigner_t, x_array, p_array, bar_limits, array_tick,
+                                R_t, n_frames, title, save, trail=True, trail_length=None,
+                                trail_color='navy', interval=50):
+    """Animate a Gaussian Wigner function together with a trailing path of its mean.
+
+    Same figure and writer as Animate_Diagonal (first frame from Plot_Wigner_Diag);
+    the only addition is a Line2D following the first moment R_t.
+
+    Parameters
+    ----------
+    wigner_t     : (T, steps, steps) Wigner function per frame
+    x_array, p_array, bar_limits, array_tick, title : as in Plot_Wigner_Diag
+    R_t          : (T, 2) or (T, 2, 1) first moment per frame
+    n_frames     : number of frames to animate
+    save         : filepath (GIF) or False
+    trail        : draw the path of R_t up to the current frame
+    trail_length : number of past frames kept in the trail (None = whole history)
+
+    Returns
+    -------
+    ani
+    """
+    R_t = np.real(np.asarray(R_t)).reshape(len(R_t), -1)[:, :2]
+    fig, im = Plot_Wigner_Diag(wigner_t[0], x_array, p_array, bar_limits, array_tick, title, False)
+    ax = im.axes
+
+    line, = ax.plot([], [], color=trail_color, lw=0.8, alpha=0.9)
+    dot, = ax.plot([], [], 'o', color=trail_color, ms=2.5)
+
+    def update(frame):
+        im.set_array(wigner_t[frame])
+        if trail:
+            start = 0 if trail_length is None else max(0, frame - trail_length)
+            line.set_data(R_t[start:frame + 1, 0], R_t[start:frame + 1, 1])
+            dot.set_data([R_t[frame, 0]], [R_t[frame, 1]])
+        return [im, line, dot]
+
+    ani = animation.FuncAnimation(fig, update, frames=n_frames, interval=interval)
+    if save:
+        ani.save(filename=save, writer="pillow")
+    return ani
+
+
+def Animate_Classical_Trajectory(r_t, x_array, array_tick, n_frames, title, save,
+                                 trail=True, trail_length=None, color='tab:red', interval=50):
+    """Animate a classical phase-space point (x_1, p_1) with an optional trailing path.
+
+    Same axes, limits and writer as Animate_Gaussian_Trajectory, but without the
+    Wigner function (a classical sample carries no uncertainty).
+
+    Parameters
+    ----------
+    r_t          : (T, 2) classical trajectory, one row per frame
+    x_array      : 1-D grid; sets the symmetric axis limits (pass the quantum grid to match)
+    array_tick   : tick positions
+    n_frames     : number of frames to animate
+    title        : axes title (False for the default)
+    save         : filepath (GIF) or False
+    trail        : draw the path up to the current frame
+    trail_length : number of past frames kept in the trail (None = whole history)
+
+    Returns
+    -------
+    ani
+    """
+    rcParams['mathtext.fontset'] = 'cm'
+    rcParams['font.family'] = 'STIXGeneral'
+
+    r_t = np.real(np.asarray(r_t)).reshape(len(r_t), -1)[:, :2]
+    fig, ax = plt.subplots(1, 1, figsize=(3.5, 3.5), dpi=300)
+    fig.set_tight_layout(True)
+
+    lables_tick = format_latex_numbers(array_tick)
+    lim = np.max(np.abs(x_array))
+    ax.axvline(x=0, color='black', linewidth=0.5, alpha=0.4)
+    ax.axhline(y=0, color='black', linewidth=0.5, alpha=0.4)
+    ax.set_ylabel(r'Momentum, $p_1$', labelpad=2, fontsize=11)
+    ax.set_xlabel(r'Position, $x_1$', labelpad=2, fontsize=11)
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.set_aspect('equal')
+    ax.set_xticks(array_tick)
+    ax.set_xticklabels(lables_tick)
+    ax.set_yticks(array_tick)
+    ax.set_yticklabels(lables_tick)
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.5)
+    ax.set_title(title if title else r'Classical phase space $(x_1, p_1)$', fontsize=13)
+
+    line, = ax.plot([], [], color=color, lw=0.8, alpha=0.9)
+    dot, = ax.plot([], [], 'o', color=color, ms=3.5)
+
+    def update(frame):
+        if trail:
+            start = 0 if trail_length is None else max(0, frame - trail_length)
+            line.set_data(r_t[start:frame + 1, 0], r_t[start:frame + 1, 1])
+        dot.set_data([r_t[frame, 0]], [r_t[frame, 1]])
+        return [line, dot]
+
+    ani = animation.FuncAnimation(fig, update, frames=n_frames, interval=interval)
+    if save:
+        ani.save(filename=save, writer="pillow")
+    return ani
+
+
+def Plot_Classical_Trajectory(t_array, r_t, sample_idx=0, title=False, save=False,
+                              cmap='viridis', figsize=(7.5, 3.2)):
+    """Classical stochastic trajectory: phase space (left) and quadratures vs time (right).
+
+    Parameters
+    ----------
+    t_array    : (n_t,) time grid
+    r_t        : (n_samples, n_t, 2) classical trajectories (x_1, p_1)
+    sample_idx : int or list of ints, the samples to show
+    title      : suptitle (False to omit)
+    save       : filepath or False
+
+    Returns
+    -------
+    fig, (ax1, ax2)
+    """
+    rcParams['mathtext.fontset'] = 'cm'
+    rcParams['font.family'] = 'STIXGeneral'
+
+    samples = np.atleast_1d(sample_idx)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize, dpi=300,
+                                   gridspec_kw={'width_ratios': [1, 1.4]})
+    fig.set_tight_layout(True)
+
+    norm = colors.Normalize(vmin=t_array[0], vmax=t_array[-1])
+    for s in samples:
+        pts = r_t[s].reshape(-1, 1, 2)
+        segs = np.concatenate([pts[:-1], pts[1:]], axis=1)
+        lc = LineCollection(segs, cmap=cmap, norm=norm, linewidth=0.6)
+        lc.set_array(t_array[:-1])
+        ax1.add_collection(lc)
+    lim = 1.05*np.max(np.abs(r_t[samples]))
+    ax1.set_xlim(-lim, lim)
+    ax1.set_ylim(-lim, lim)
+    ax1.set_aspect('equal')
+    ax1.axvline(x=0, color='black', linewidth=0.5, alpha=0.4)
+    ax1.axhline(y=0, color='black', linewidth=0.5, alpha=0.4)
+    ax1.set_xlabel(r'Position, $x_1$', labelpad=2, fontsize=11)
+    ax1.set_ylabel(r'Momentum, $p_1$', labelpad=2, fontsize=11)
+    cbar = fig.colorbar(lc, ax=ax1, fraction=0.046, pad=0.04)
+    cbar.set_label(r'$t$', fontsize=10, rotation=0)
+
+    line_styles = ['-', '--', ':', '-.']
+    for n, s in enumerate(samples):
+        ls = line_styles[n % len(line_styles)]
+        ax2.plot(t_array, r_t[s, :, 0], ls, color='tab:blue', lw=0.8,
+                 label=r'$x_1(t)$' if n == 0 else None)
+        ax2.plot(t_array, r_t[s, :, 1], ls, color='tab:red', lw=0.8,
+                 label=r'$p_1(t)$' if n == 0 else None)
+    ax2.axhline(y=0, color='black', linewidth=0.5, alpha=0.4)
+    ax2.set_xlim(t_array[0], t_array[-1])
+    ax2.set_xlabel(r'Time, $t$', labelpad=2, fontsize=11)
+    leg = ax2.legend(fontsize=9, frameon=True)
+    leg.get_frame().set_linewidth(0.4)
+
+    for ax in (ax1, ax2):
+        for spine in ax.spines.values():
+            spine.set_linewidth(0.5)
+    if title:
+        fig.suptitle(title, fontsize=13)
+    if save:
+        plt.savefig(save, bbox_inches='tight', transparent=True)
+    return fig, (ax1, ax2)

@@ -63,7 +63,7 @@ def Compute_sigma_JK_Unitary_Gaussian_General_Numerical(n_modes, sigma_0, H_J, H
     t_span = (t_array[0], t_array[-1])
     
     # Solve the ODE system
-    sigma_jk_sol = solve_ivp(equation_dot_sigma_jk, t_span, y0, t_eval=t_array, args=(H_J, H_K, n_modes),method='DOP853')
+    sigma_jk_sol = solve_ivp(equation_dot_sigma_jk, t_span, y0, t_eval=t_array, args=(H_J, H_K, n_modes), **Gaussian.ODE_KWARGS)
     
     
     
@@ -95,7 +95,7 @@ def Compute_R_JK_Unitary_Gaussian_General_Numerical(n_modes,r_0, sigma_JK_sol, H
     t_span = (t_array[0], t_array[-1])
     
     # Solve for r_jk
-    sol_r = solve_ivp(equation_dot_r_jk, t_span, y0, t_eval=t_array, args=(sigma_JK_interp, H_j, H_k, r_j, r_k, n_modes),method='DOP853')
+    sol_r = solve_ivp(equation_dot_r_jk, t_span, y0, t_eval=t_array, args=(sigma_JK_interp, H_j, H_k, r_j, r_k, n_modes), **Gaussian.ODE_KWARGS)
     
     # Extract solutioon
     r_jk_sol = sol_r.y.T.reshape(-1, 2*n_modes, 1)  # Reshape back to vectors
@@ -129,7 +129,7 @@ def Compute_R_JK_0_Unitary_Gaussian_General_Numerical(n_modes, r_JK_sol, sigma_J
     
     # Solve for r_jk
     sol_r_0 = solve_ivp(equation_dot_r_jk_0, t_span, y0, t_eval=t_array, 
-                        args=(sigma_JK_interp,r_JK_interp, H_j, H_k, r_j, r_k, J_labels, K_labels, H_q_0_array, n_modes), method='DOP853')
+                        args=(sigma_JK_interp,r_JK_interp, H_j, H_k, r_j, r_k, J_labels, K_labels, H_q_0_array, n_modes), **Gaussian.ODE_KWARGS)
     # Extract solutioon
     r_0_jk_sol = sol_r_0.y.T # Reshape back to vectors
       

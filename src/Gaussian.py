@@ -12,6 +12,13 @@ from scipy.integrate import quad, quad_vec
 
 import QIT_Functions as QIT_Functions
 
+# Solver settings shared by every phase-space ODE in this library.  scipy's default
+# (RK45, rtol=1e-3, atol=1e-6) leaves errors of order 1e-3 in sigma, which is far larger
+# than the closed-form residuals these solutions are compared against.  sigma saturates
+# at ~1.5e-10 for rtol=1e-10 -- tightening further buys nothing, because the remaining
+# error comes from the interp1d(kind='cubic') that feeds sigma into the r ODE.
+ODE_KWARGS = dict(method='DOP853', rtol=1e-10, atol=1e-12)
+
 def Omega_N(n_modes):
     """Generates the Simpletic Form of n modes"""
     omega_n = np.zeros((2*n_modes, 2*n_modes))
@@ -174,7 +181,7 @@ def Compute_Sigma_Open_Gaussian_Numerical(n_modes, sigma_0, H_m, E, D, t_array):
     t_span = (t_array[0], t_array[-1])
     
     # Solve the ODE system
-    sigma_sol = solve_ivp(equation_dot_sigma, t_span, y0, t_eval=t_array, args=(H_m, E, D,n_modes))
+    sigma_sol = solve_ivp(equation_dot_sigma, t_span, y0, t_eval=t_array, args=(H_m, E, D,n_modes), **ODE_KWARGS)
     
     # Extract solutions
     sigma_t = sigma_sol.y.T.reshape(-1,2*n_modes, 2*n_modes)  # Reshape back to matrices
@@ -191,7 +198,7 @@ def Compute_Sigma_Open_Gaussian_Analytical(n_modes, sigma_0, H_m, E, D, t_array)
     t_span = (t_array[0], t_array[-1])
     
     # Solve the ODE system
-    sigma_sol = solve_ivp(equation_dot_sigma, t_span, y0, t_eval=t_array, args=(H_m, E, D,n_modes))
+    sigma_sol = solve_ivp(equation_dot_sigma, t_span, y0, t_eval=t_array, args=(H_m, E, D,n_modes), **ODE_KWARGS)
     
     # Extract solutions
     sigma_t = sigma_sol.y.T.reshape(-1,2*n_modes, 2*n_modes)  # Reshape back to matrices
@@ -218,7 +225,7 @@ def Compute_R_Open_Gaussian_Numerical(n_modes, r_0, H_m, r_m, E, t_array):
     t_span = (t_array[0], t_array[-1])
     
     # Solve for r_jk
-    sol_r = solve_ivp(equation_dot_r, t_span, y0, t_eval=t_array, args=( H_m, r_m, E, n_modes))
+    sol_r = solve_ivp(equation_dot_r, t_span, y0, t_eval=t_array, args=( H_m, r_m, E, n_modes), **ODE_KWARGS)
     
     # Extract solutioon
     r_t = sol_r.y.T.reshape(-1, 2*n_modes, 1)  # Reshape back to vectors
@@ -260,16 +267,16 @@ def Open_Numerical_Time_Dep(n_modes, r_0, sigma_0, H_m_func, r_m_func, E, D, t_a
 
     sigma_sol = solve_ivp(
         equation_dot_sigma_time_dep, t_span, sigma_0.flatten(),
-        t_eval=t_array, method='DOP853',
+        t_eval=t_array,
         args=(H_m_func, E, D, n_modes)
-    )
+    , **ODE_KWARGS)
     sigma_t = sigma_sol.y.T.reshape(-1, 2*n_modes, 2*n_modes)
 
     r_sol = solve_ivp(
         equation_dot_r_time_dep, t_span, r_0.flatten(),
-        t_eval=t_array, method='DOP853',
+        t_eval=t_array,
         args=(H_m_func, r_m_func, E, n_modes)
-    )
+    , **ODE_KWARGS)
     r_t = r_sol.y.T.reshape(-1, 2*n_modes, 1)
 
     return r_t, sigma_t

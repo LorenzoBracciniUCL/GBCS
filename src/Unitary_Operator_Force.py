@@ -69,7 +69,7 @@ def Dynamics_Numerical(N_qubits, n_modes, r_0, sigma_0, H_m, r_ham_array, H_q_0_
         r_0_jk = np.broadcast_to(r_0[np.newaxis, np.newaxis], (N2, N2, 2*n_modes, 1))
 
     sigma_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 2*n_modes))
-    r_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 1), dtype=np.complex64)
+    r_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 1), dtype=np.complex128)
     C_JK_t = np.zeros((len(t_array), N2, N2))
     phi_JK_t = np.zeros((len(t_array), N2, N2))
 
@@ -115,7 +115,7 @@ def Dynamics_Analytical(N_qubits, n_modes, r_0, sigma_0, S_func, H_m, r_ham_arra
         r_0_jk = np.broadcast_to(r_0[np.newaxis, np.newaxis], (N2, N2, 2*n_modes, 1))
 
     sigma_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 2*n_modes))
-    r_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 1), dtype=np.complex64)
+    r_JK_t = np.zeros((len(t_array), N2, N2, 2*n_modes, 1), dtype=np.complex128)
     C_JK_t = np.zeros((len(t_array), N2, N2))
     phi_JK_t = np.zeros((len(t_array), N2, N2))
 
