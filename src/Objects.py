@@ -19,6 +19,7 @@ import Open_Operator_Force as Open_Operator_Force
 import Open_Operator_Gaussian as Open_Operator_Gaussian
 import Open_Operator_Time_Depentent as Open_Operator_Time_Depentent
 
+import Riccati_Linear as Riccati_Linear
 import Symplectic_Known as Symplectic_Known
 import Measurements as Measurements
 import Plots_Functions as Plots_Functions
@@ -215,11 +216,21 @@ class Quantum_State:
 
 ################################## Dynamics ################################## 
 
-    def Unitary_Dynamics_Numerical(self, Hamiltonian, t_array):
+    def Check_Solver(self, solver, Hamiltonian):
+        if solver not in ('ode', 'linear'):
+            raise ValueError(f"solver must be 'ode' or 'linear', not {solver!r}")
+        if solver == 'linear' and list(Hamiltonian.type) != ['Constant', 'General']:
+            raise NotImplementedError(f"solver='linear' only covers the Constant + General case, not {Hamiltonian.type}")
+
+    def Unitary_Dynamics_Numerical(self, Hamiltonian, t_array, solver='ode'):
         """Given an Hamiltonian, Computes the unitary Dyanmics Numerically:
         1. Operator Valued Gaussian -> Solves the ODEs of Table 1
         2. Operator Valued Force -> Numerically Exponentiate the Symplectic Transformation for Table 2
+
+        solver='linear' replaces the ODEs of case 1 by the linear map of Riccati_Linear.
         """
+
+        self.Check_Solver(solver, Hamiltonian)
 
         self.t_array = t_array
 
@@ -254,7 +265,11 @@ class Quantum_State:
                 self.type = 'GCS'
 
             elif Hamiltonian.type[1] == 'General':
-                self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t = Unitary_Operator_Gaussian.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0,
+                if solver == 'linear':
+                    self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t = Riccati_Linear.Dynamics_Linear(self.N_qubits, self.n_modes, self.r_0, self.sigma_0,
+                                                                                                    Hamiltonian.H_array, Hamiltonian.r_array, Hamiltonian.H_q_0_array, self.rho_q_0, t_array)
+                else:
+                    self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t = Unitary_Operator_Gaussian.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0,
                                                                                                     Hamiltonian.H_array, Hamiltonian.r_array, Hamiltonian.H_q_0_array, self.rho_q_0, t_array)
                 self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
                 self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
@@ -317,7 +332,10 @@ class Quantum_State:
 
         return
     
-    def Open_Dynamics_Numerical(self, Hamiltonian, Decoherence, t_array):
+    def Open_Dynamics_Numerical(self, Hamiltonian, Decoherence, t_array, solver='ode'):
+        """solver='linear' replaces the ODEs of the Constant + General case by the linear map of Riccati_Linear."""
+
+        self.Check_Solver(solver, Hamiltonian)
 
         self.t_array = t_array
 
@@ -361,9 +379,14 @@ class Quantum_State:
                 self.type = 'GCS'
 
             elif Hamiltonian.type[1] == 'General':
-                self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t = Open_Operator_Gaussian.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0,
-                                                                                                Hamiltonian.H_array, Hamiltonian.r_array, Hamiltonian.H_q_0_array, self.rho_q_0, E, D, t_array,
-                                                                                                d=Decoherence.d_vec, Gamma_z=Decoherence.Gamma_z)
+                if solver == 'linear':
+                    self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t = Riccati_Linear.Dynamics_Linear(self.N_qubits, self.n_modes, self.r_0, self.sigma_0,
+                                                                                                    Hamiltonian.H_array, Hamiltonian.r_array, Hamiltonian.H_q_0_array, self.rho_q_0, t_array,
+                                                                                                    E=E, D=D, d=Decoherence.d_vec, Gamma_z=Decoherence.Gamma_z)
+                else:
+                    self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t = Open_Operator_Gaussian.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0,
+                                                                                                    Hamiltonian.H_array, Hamiltonian.r_array, Hamiltonian.H_q_0_array, self.rho_q_0, E, D, t_array,
+                                                                                                    d=Decoherence.d_vec, Gamma_z=Decoherence.Gamma_z)
                 self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
                 self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
                 self.type = 'GCS'
