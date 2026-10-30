@@ -149,25 +149,28 @@ def Reference_Dynamics(N_qubits, n_modes, cutoff, mode_states, H_array, r_array,
     rho_q_t = np.zeros((T, N2, N2), dtype=complex)
     r_JK_t = np.zeros((T, N2, N2, dim, 1), dtype=complex) if moments else None
     sigma_JK_t = np.zeros((T, N2, N2, dim, dim), dtype=complex) if moments else None
-    r_mats = [op.full() for op in r_ops]
-    sym_mats = [[0.5*(r_mats[a] @ r_mats[b] + r_mats[b] @ r_mats[a]) for b in range(dim)] for a in range(dim)]
+    if moments:
+        r_mats = [op.full() for op in r_ops]
+        sym_mats = [[0.5*(r_mats[a] @ r_mats[b] + r_mats[b] @ r_mats[a]) for b in range(dim)] for a in range(dim)]
     edge = 0.0
 
     for t, state in enumerate(result.states):
-        rho = state.full() if state.isoper else None
-        if rho is None:
-            psi = state.full().ravel()
-            psi = psi.reshape(D_modes, N2)
-            branch = np.einsum('aj,bk->jkab', psi, psi.conj())
+        if state.isoper:
+            branch = state.full().reshape(D_modes, N2, D_modes, N2).transpose(1, 3, 0, 2)
+            rho_q_t[t] = np.trace(branch, axis1=2, axis2=3)
+            diagonal = np.real(np.einsum('jjaa->a', branch))
         else:
-            branch = rho.reshape(D_modes, N2, D_modes, N2).transpose(1, 3, 0, 2)
-        rho_q_t[t] = np.trace(branch, axis1=2, axis2=3)
-        diagonal = np.real(np.einsum('jjaa->a', branch)).reshape([cutoff]*n_modes)
+            psi = state.full().reshape(D_modes, N2)
+            rho_q_t[t] = psi.T @ psi.conj()
+            diagonal = np.sum(np.abs(psi)**2, axis=1)
+        diagonal = diagonal.reshape([cutoff]*n_modes)
         for m in range(n_modes):
             marginal = np.sum(diagonal, axis=tuple(i for i in range(n_modes) if i != m))
             edge = max(edge, marginal[-1])
         if not moments:
             continue
+        if not state.isoper:
+            branch = np.einsum('aj,bk->jkab', psi, psi.conj())
         for j in range(N2):
             for k in range(N2):
                 rho_jk = branch[j, k]

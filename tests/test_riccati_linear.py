@@ -209,7 +209,7 @@ def test_conjugation_convention():
     assert np.array_equal(C, np.swapaxes(C, 1, 2))
     # Not array_equal: phi_jj is round-off, and phi_kj = -phi_jk flips its sign as in the ODE solvers
     assert np.max(np.abs(phi + np.swapaxes(phi, 1, 2))) < 1e-14
-    assert np.max(np.abs(sigma - np.swapaxes(sigma, 3, 4))) < 1e-13
+    assert np.array_equal(sigma, np.swapaxes(sigma, 3, 4))
 
 
 def test_diagonal_branches_keep_their_norm():
@@ -284,24 +284,37 @@ def test_log_det_stays_continuous_through_many_windings(stride):
     assert np.max(np.abs(-C[:, 1, 0] + 1j*phi[:, 1, 0] - exact)) < 1e-10
 
 
-def test_near_pole_is_resolved():
-    """X = cos(t) + i (eps + i) sin(t) passes within about eps of zero at t = pi/4, off the
+@pytest.mark.parametrize('n_modes', [1, 2, 3])
+def test_near_pole_is_resolved(n_modes):
+    """X = (cos(t) + i (eps + i) sin(t)) 1 passes within about eps of zero at t = pi/4, off the
     real axis.  Stepping over it would lose a phase of pi per eigenvalue of X.
+
+    With n_modes > 1 the four or six eigenvalues can each be within pi/2 while their phases
+    add up past pi, so the log of det X would be wrong: the logs must be summed one by one.
     """
     eps = 0.02
-    sigma_0 = (eps + 1j)*np.eye(2, dtype=complex)
-    H_array = [np.zeros((2, 2)), np.eye(2)]
+    dim = 2*n_modes
     t = np.linspace(0, 3, 13)
     fine = np.linspace(0, 3, 1200001)
-    x = np.cos(fine) + 1j*(eps + 1j)*np.sin(fine)
-    exact = -Continuous_Log(x)[::100000]
-    sigma_0_jk = np.broadcast_to(sigma_0, (2, 2, 2, 2)).copy()
-    sigma_0_jk[1, 1] = np.eye(2)
-    sigma_0_jk[0, 0] = np.eye(2)
-    r_0_jk = np.zeros((2, 2, 2, 1), dtype=complex)
-    H_flipped = [H_array[0], -H_array[1]]
-    _, _, C, phi = Dynamics_Linear(1, 1, r_0_jk, sigma_0_jk, H_flipped, [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), t)
+    exact = -n_modes*Continuous_Log(np.cos(fine) + 1j*(eps + 1j)*np.sin(fine))[::100000]
+    sigma_0_jk = np.broadcast_to(np.eye(dim, dtype=complex), (2, 2, dim, dim)).copy()
+    sigma_0_jk[0, 1] = (eps + 1j)*np.eye(dim)
+    r_0_jk = np.zeros((2, 2, dim, 1), dtype=complex)
+    force = np.zeros((dim, 1))
+    _, _, C, phi = Dynamics_Linear(1, n_modes, r_0_jk, sigma_0_jk, [np.zeros((dim, dim)), -np.eye(dim)], [force, force], np.zeros(1),
+                                   np.ones((2, 2)), t)
     assert np.max(np.abs(-C[:, 0, 1] + 1j*phi[:, 0, 1] - exact)) < 1e-8
+
+
+def test_strong_squeezing_keeps_its_digits():
+    """On a coarse grid X has condition number ~1e8 here.  Limiting it per step gives 7e-14 on r
+    where inverting X directly gives 3e-9.
+    """
+    s, x_0, p_0, tau = 1e8, 0.3, 0.2, 0.9
+    _, r, _, _ = Dynamics_Linear(1, 1, np.array([[x_0], [p_0]], dtype=complex), np.diag([1/s, s]).astype(complex),
+                                 [np.zeros((2, 2)), np.eye(2)], [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), np.linspace(0, tau, 3))
+    z_1, z_2 = s*np.cos(tau) + 1j*np.sin(tau), np.cos(tau) + 1j*s*np.sin(tau)
+    assert np.max(np.abs(r[-1, 1, 0, :, 0]/np.array([s*x_0/z_1, p_0/z_2]) - 1)) < 1e-12
 
 
 def test_singular_X_raises():
