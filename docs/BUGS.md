@@ -315,9 +315,11 @@ with two-times parameters involving `S₊(t)` and `S₋(τ−t)`.
 - Numerical integration of the first-order characteristic function correction
 - Extension of `Wigner_Functions.py` to evaluate the integral form
 
-### ⚠️ 7.5 Doubling / Riccati solver — not exposed (MISSING FEATURE)
+### ✅ 7.5 Doubling / Riccati solver — resolved
 
-Sec. 4.3 (`subsec:riccati`) gives a systematic method to solve the Riccati equation analytically by doubling the variables: `σ_jk = Y_jk X_jk^{-1}` where `(X, Y)^T` evolves under a linear `A_jk` matrix. The paper uses this to solve Example 1 (dispersive readout). **Not implemented** as a callable in any module. Needed to reproduce the paper's first physical example without relying on the numerical ODE path.
+Sec. 4.3 (`subsec:riccati`) gives a systematic method to solve the Riccati equation analytically by doubling the variables: `σ_jk = Y_jk X_jk^{-1}` where `(X, Y)^T` evolves under a linear `A_jk` matrix. The paper uses this to solve Example 1 (dispersive readout).
+
+Implemented in `src/Riccati_Linear.py` (`Doubling_Matrix`, `Dynamics_Linear`) and exposed as `solver='linear'` on `Unitary_Dynamics_Numerical` and `Open_Dynamics_Numerical`, for the Constant + General case. It extends the doubling to `r` and `s`, so all three come from one matrix exponential per branch pair. See `tests/test_riccati_linear.py` and `notebooks/Riccati_Linear_Map.ipynb`.
 
 ### ⚠️ 7.6 ✅ Ċ sign — fixed (note for record)
 
@@ -348,7 +350,7 @@ The paper flags `\textcolor{red}{removed minus sign from $\dot{C}$}` in Eq. (gen
 **New features for final push:**
 
 7. **Implement perturbation theory / trajectory method** (§7.4): new object for T₁ correction; needed for the second example's Wigner function.
-8. **Expose Riccati doubling solver** (§7.5): needed for the first example's analytical solution.
+8. ✅ **Expose Riccati doubling solver** (§7.5): done, `src/Riccati_Linear.py`.
 
 **Cleanup (can follow final push):**
 

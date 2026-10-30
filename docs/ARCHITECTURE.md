@@ -97,6 +97,7 @@ In the Gaussian-only (no qubit) code path, `r_t : (T, 2n, 1)` and `sigma_t : (T,
 | `src/Unitary_Operator_Gaussian.py` | **General** case, three nested ODEs (σ ⟶ r ⟶ r⁽⁰⁾) | Tab. 1 |
 | `src/Open_Operator_Force.py` | Force + Lindblad. `Dynamics_Symetric_Numerical` (E = 0 path) is the only working entry point | Tab. 2 with D |
 | `src/Open_Operator_Gaussian.py` | General + Lindblad. Adds 2E to drift, +D to σ̇, but **misses Ω·d driving and Γ_z dephasing** | Tab. 3 |
+| `src/Riccati_Linear.py` | **General** case, unitary and open, constant H: linear doubling map for σ, r and s in place of the nested ODEs (`solver='linear'`) | Sec. `subsec:riccati`, App. `app:doubling` |
 | `src/Unitary_Operator_Time_Depentent.py` | Time-dependent unitary General — currently sign-flipped vs constant version (BUGS.md §1) | Tab. 1 generalized to H(t) |
 | `src/Open_Operator_Time_Depentent.py` | Misnamed: actually implements time-dependent **unitary** ODEs (no E/D), with sign and coefficient errors | — |
 | `src/Measurements.py` | Qubit projective measurement, generaldyne / homodyne POVM (Eq. 51), PPT log-negativity. Hardcoded N = 2 in `Negativity_*` | Eq. 51, Sec. VII |

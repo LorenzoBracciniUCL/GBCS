@@ -13,6 +13,7 @@ For a deep dive, read `docs/ARCHITECTURE.md` (paper-to-code map) and `docs/BUGS.
 - `Unitary_Operator_Gaussian.py` — **General** case (despite the name). Three nested ODEs σ → r → r⁽⁰⁾, Tab. 1.
 - `Open_Operator_Force.py` — only `Dynamics_Symetric_Numerical` (E=0) is reliable; `Dynamics_General_Numerical` calls undefined functions.
 - `Open_Operator_Gaussian.py` — General + Lindblad, Tab. 3. Missing Ω·d driving and Γ_z dephasing terms.
+- `Riccati_Linear.py` — General case, unitary and open, constant H: linear doubling map for σ, r, s in place of the nested ODEs. `solver='linear'` in `Objects`.
 - `*_Time_Depentent.py` (sic — typo in filename) — sign-flipped vs constant versions; "Open" variant lacks E/D entirely.
 - `Measurements.py` — projective qubit measurements, generaldyne/homodyne (Eq. 51), PPT log-negativity (hardcoded N=2).
 - `Wigner_Functions.py` — Wigner functions: diagonal, PMS, Gaussian.
