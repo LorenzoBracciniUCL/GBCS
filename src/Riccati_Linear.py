@@ -32,8 +32,9 @@ from Open_Operator_Gaussian import Compute_H_J, Compute_r_J
 # The condition is enforced on all of [0, h] as follows.  Z(t) = X(t) - 1 has Z(0) = 0.  Its quadratic
 # interpolant through t = 0, h/2, h is bounded by 9/8 of the larger sample, and differs from Z by at
 # most INTERPOLATION_BOUND ||A h||^3 exp(||A h||) ||(1, Q sigma)||, all Frobenius norms, with Q from
-# Observed_Rows.  So samples below MAX_X_DISTANCE and a remainder below MAX_INTERPOLATION_ERROR give
-# 9/8 * 0.75 + 0.15 < 1.
+# Observed_Rows, and with the rows it dropped counted through their size.  So samples below
+# MAX_X_DISTANCE and a remainder below MAX_INTERPOLATION_ERROR give 9/8 * 0.75 + 0.15 < 1.
+# All of this holds for X as defined; rounding of X is the subject of the next block.
 MAX_X_DISTANCE = 0.75
 MAX_INTERPOLATION_ERROR = 0.15
 INTERPOLATION_BOUND = np.sqrt(3)/216
@@ -41,12 +42,48 @@ INTERPOLATION_BOUND = np.sqrt(3)/216
 # Singular values below this, relative to ||A||, are round-off in H_J - H_K rather than coupling.
 OBSERVED_TOLERANCE = 1e-13
 
+# X only depends on sigma through Q sigma, but it is computed entry by entry as S_12 @ sigma.  If sigma
+# is large in a direction the coupling does not see and the frame is not aligned with that direction,
+# the exact cancellation is lost to rounding of eps |S_12| |sigma|.  The stored sigma already has
+# absolute precision eps ||sigma|| on its coupled block, so the information is gone from the input:
+# this is detected, not cured.  The aligned case has exact zeros in S_12, so the componentwise
+# product stays at 0 where a norm product would not, and a large sigma that the coupling does see
+# collapses within a step whose S_12 is small, so that stays quiet too.
+#
+# Each accepted step adds to two running estimates, which do not change when a step is halved:
+#   of the relative error in s and sigma:  e_s = sum eps max |S_12| |sigma|
+#   of the error in r:                     e_r = sum e |sigma| |x| / (1 + |r|), with e the term above.
+# e_r is the larger effect.  X feeds sigma_new = Y X^-1 with eps sigma^2 in a block that is really zero,
+# and r_new = y - sigma_new x picks it up, so r can be wrong by 1 while rho_q is good to 1e-6.
+#
+# Limits, measured on an unstable and a squeezed bystander mode at beam-splitter angles 0.1, 0.6, 1.2:
+# e_r exceeds the true error in r by 9 to 20 around here, so MAX_ROUNDING_ERROR_R keeps it below about
+# 3e-6.  e_s tracks the error in rho_q up to about 1e-6, and falls short by up to 8 beyond it as noise
+# feeds back into sigma, so MAX_ROUNDING_ERROR_S keeps that below about 3e-6.  e_s alone guards r = 0,
+# where x = 0.  Both leave a margin of 2 or more to the mildest cases that must run, sigma ~ 1e6.
+#
+# Neither estimate is computed while |sigma| stays below NEGLIGIBLE_SIGMA, where the sum of eps |S_12| |sigma|
+# would need a coupled evolution of order 1e6 ||H_J - H_K||^-1 to reach its limit.  This keeps the
+# bookkeeping to one abs and max per step in the ordinary case.
+UNIT_ROUNDOFF = np.finfo(float).eps
+NEGLIGIBLE_SIGMA = 1e3
+MAX_ROUNDING_ERROR_S = 1e-6
+MAX_ROUNDING_ERROR_R = 3e-5
+
+# Substeps one branch pair may take, as a fixed allowance plus a factor on the steps the grid and ||A||
+# ask for.  Each pole of sigma costs about 100 extra substeps, so a legitimate run stays far below this.
+SUBSTEP_ALLOWANCE = 100000
+SUBSTEPS_PER_BASE_STEP = 1000
+
 # Halvings before giving up.  This means X is singular or sigma is too large to resolve, to working
-# precision.  sigma ~ 1e16 still passes, 1e20 does not.  A singular X is a pole of sigma, where ln det X
-# in s diverges too: with r = 0, exp(s) ~ (det X)^(-1/2) grows without bound.
+# precision.  Where the coupling sees the large sigma, sigma ~ 1e18 passes and 1e19 does not; elsewhere
+# the limit is far lower and set by MAX_ROUNDING_ERROR_R, unless the frame is aligned with that direction.
+# A singular X is a pole of sigma, where ln det X in s diverges too: with r = 0, exp(s) ~ (det X)^(-1/2)
+# grows without bound.
 MAX_HALVINGS = 60
 
-# Relative to the largest entry.  Loose enough for the complex64 U_N floor of ~1e-8 in Ladder runs.
+# Relative to the size of each matrix on its own.  Loose enough for the complex64 U_N floor of ~1e-8 in
+# Ladder runs.  E and D come from one B, so there they are relative to the larger of the two.
 SYMMETRY_TOLERANCE = 1e-6
 
 
@@ -103,18 +140,20 @@ def Observed_Rows(A):
     Orthonormal rows Q spanning the rows of the upper-right block of every power of A.  X(t) only sees
     sigma through Q sigma, so a large sigma elsewhere, such as an unstable mode the qubits do not
     couple to, must not force small steps: it does not move X at all.
+    Also returns the largest singular value it dropped, which is 0 when the zeros are exact.
     """
     dim = A.shape[0]//2
     scale = np.linalg.norm(A)
     if scale == 0:
-        return np.zeros((0, dim), dtype=np.complex128)
+        return np.zeros((0, dim), dtype=np.complex128), 0.0
     scaled = A/scale
     power, blocks = scaled, []
     for _ in range(2*dim):
         blocks.append(power[:dim, dim:])
         power = scaled @ power
     _, values, rows = np.linalg.svd(np.vstack(blocks), full_matrices=False)
-    return rows[values > OBSERVED_TOLERANCE]
+    kept = values > OBSERVED_TOLERANCE
+    return rows[kept], np.max(values[~kept], initial=0.0)
 
 
 class Step_Propagators:
@@ -126,7 +165,8 @@ class Step_Propagators:
         A = M[:2*self.dim, :2*self.dim]
         self.base_level = Base_Level(A, h)
         self.norm_A = np.linalg.norm(A)
-        self.observed = Observed_Rows(A)
+        self.observed, self.dropped = Observed_Rows(A)
+        self.coupled = np.any(A[:self.dim, self.dim:] != 0)
         self.identity = np.eye(self.dim)
         self.blocks = {}
 
@@ -141,14 +181,18 @@ class Step_Propagators:
                                   P[dim:2*dim, :dim], P[dim:2*dim, dim:2*dim],
                                   P[:dim, 2*dim + 1], P[dim:2*dim, 2*dim + 1],
                                   P[2*dim, dim:2*dim], P[2*dim, 2*dim + 1],
-                                  INTERPOLATION_BOUND*norm**3*np.exp(norm))
+                                  INTERPOLATION_BOUND*norm**3*np.exp(norm),
+                                  np.abs(P[:dim, dim:2*dim]))
         return self.blocks[level]
 
 
 def Accept_Step(propagators, level, sigma, X):
     """True if ||X(t) - 1|| < 1 on the whole step, see MAX_X_DISTANCE."""
-    remainder = propagators(level)[-1]
-    size = np.sqrt(propagators.dim + np.linalg.norm(propagators.observed @ sigma)**2)
+    remainder = propagators(level)[-2]
+    size = propagators.dim + np.linalg.norm(propagators.observed @ sigma)**2
+    if propagators.dropped > 0:
+        size += (propagators.dropped*np.linalg.norm(sigma))**2
+    size = np.sqrt(size)
     if not remainder*size <= MAX_INTERPOLATION_ERROR:
         return False
     if not np.linalg.norm(X - propagators.identity) <= MAX_X_DISTANCE:
@@ -157,36 +201,63 @@ def Accept_Step(propagators, level, sigma, X):
     return bool(np.linalg.norm(S_11_half + S_12_half @ sigma - propagators.identity) <= MAX_X_DISTANCE)
 
 
-def Advance(propagators, level, sigma, r, rate):
+class Step_Ledger:
+    """Running totals for one branch pair: work done, and the rounding error of X accumulated into s."""
+
+    def __init__(self, limit):
+        self.limit = limit
+        self.substeps = 0
+        self.rounding = 0.0
+        self.rounding_r = 0.0
+
+
+def Advance(propagators, level, sigma, r, rate, ledger):
     """
     Restart the linear system from X = 1, Y = sigma, x = 0, y = r and step it once,
     halving the step until X stays on one branch of the log.
     Returns the updated sigma and r, and the increment of s.
     """
     (h_level, S_11, S_12, S_21, S_22,
-     p_x, p_y, w_y, w_0, _) = propagators(level)
+     p_x, p_y, w_y, w_0, _, abs_S_12) = propagators(level)
+
+    ledger.substeps += 1
+    if ledger.substeps > ledger.limit:
+        raise np.linalg.LinAlgError(f'gave up after {ledger.limit} substeps: sigma_jk changes too fast to follow')
 
     X = S_11 + S_12 @ sigma
 
     if not Accept_Step(propagators, level, sigma, X):
         if level - propagators.base_level >= MAX_HALVINGS:
+            if not np.all(np.isfinite(sigma)):
+                raise np.linalg.LinAlgError('sigma overflowed double precision')
             raise np.linalg.LinAlgError(f'X could not be kept near 1 with {MAX_HALVINGS} halvings: '
                                         'it is singular, or sigma is too large, to working precision')
-        sigma, r, ds_1 = Advance(propagators, level + 1, sigma, r, rate)
-        sigma, r, ds_2 = Advance(propagators, level + 1, sigma, r, rate)
+        sigma, r, ds_1 = Advance(propagators, level + 1, sigma, r, rate, ledger)
+        sigma, r, ds_2 = Advance(propagators, level + 1, sigma, r, rate, ledger)
         return sigma, r, ds_1 + ds_2
+
+    rounding = 0.0
+    if propagators.coupled:
+        abs_sigma = np.abs(sigma)
+        if abs_sigma.max() > NEGLIGIBLE_SIGMA:
+            rounding = UNIT_ROUNDOFF*(abs_S_12 @ abs_sigma).max()
+            ledger.rounding += rounding
 
     Y = S_21 + S_22 @ sigma
     sigma_new = np.linalg.solve(X.T, Y.T).T
     sigma_new = 0.5*sigma_new + 0.5*sigma_new.T
-    if not np.all(np.isfinite(sigma_new)):
-        raise np.linalg.LinAlgError('sigma overflowed double precision')
 
     x = S_12 @ r + p_x
     r_new = S_22 @ r + p_y - sigma_new @ x
     w = w_y @ r + w_0
 
     ds = -x @ r_new + w - 0.5*np.sum(np.log(np.linalg.eigvals(X))) + h_level*rate
+    if rounding:
+        ledger.rounding_r += rounding*(np.abs(sigma_new) @ np.abs(x)).max()/(1 + np.abs(r_new).max())
+        if ledger.rounding > MAX_ROUNDING_ERROR_S or ledger.rounding_r > MAX_ROUNDING_ERROR_R:
+            raise np.linalg.LinAlgError('sigma is too large in a direction the coupling does not resolve, to working '
+                                        f'precision: estimated rounding error {ledger.rounding:.1e} in s and '
+                                        f'{ledger.rounding_r:.1e} in r.  A frame aligned with the uncoupled modes avoids this')
     return sigma_new, r_new, ds
 
 
@@ -207,6 +278,8 @@ def Branch_Trajectory(n_modes, sigma_0, r_0, A, f1, f2, c_0, steps, step_index, 
     rate = 0.5*np.trace(A[:dim, :dim]) + c_0
 
     propagators = [Step_Propagators(M, h) for h in steps]
+    base_substeps = sum(2**propagators[index].base_level for index in step_index)
+    ledger = Step_Ledger(SUBSTEP_ALLOWANCE + SUBSTEPS_PER_BASE_STEP*base_substeps)
 
     sigma = 0.5*(sigma_0 + sigma_0.T).astype(np.complex128)
     r = np.ravel(r_0).astype(np.complex128)
@@ -218,8 +291,12 @@ def Branch_Trajectory(n_modes, sigma_0, r_0, A, f1, f2, c_0, steps, step_index, 
         level = propagator.base_level
         try:
             for _ in range(2**level):
-                sigma, r, ds = Advance(propagator, level, sigma, r, rate)
+                sigma, r, ds = Advance(propagator, level, sigma, r, rate, ledger)
                 s += ds
+            if not np.all(np.isfinite(sigma)):
+                raise np.linalg.LinAlgError('sigma overflowed double precision')
+            if not (np.all(np.isfinite(r)) and np.isfinite(s)):
+                raise np.linalg.LinAlgError('r or s overflowed double precision')
         except np.linalg.LinAlgError as error:
             raise np.linalg.LinAlgError(f'Stopped between t = {t_array[i]} and t = {t_array[i+1]}: {error}. '
                                         'sigma_jk and s_jk cannot be followed past this point.') from error
@@ -244,23 +321,42 @@ def Grid_Steps(t_array):
     return steps, step_index
 
 
-def Check_Symmetry(name, M, sign):
-    """Raise unless M = sign M^T, on its last two axes, to SYMMETRY_TOLERANCE."""
+def Check_Symmetry(name, M, sign, scale=None):
+    """Raise unless M = sign M^T, for each matrix on the last two axes, to SYMMETRY_TOLERANCE."""
     M = np.asarray(M)
-    if np.max(np.abs(M - sign*np.swapaxes(M, -1, -2))) > SYMMETRY_TOLERANCE*max(1, np.max(np.abs(M))):
+    residual = np.max(np.abs(M - sign*np.swapaxes(M, -1, -2)), axis=(-2, -1))
+    if scale is None:
+        scale = np.max(np.abs(M), axis=(-2, -1))
+    if np.any(residual > SYMMETRY_TOLERANCE*scale):
         raise ValueError(f"{name} must be {'symmetric' if sign > 0 else 'antisymmetric'}")
 
 
-def Check_Inputs(N_qubits, sigma_0, H_array, E, D):
-    if len(H_array) != N_qubits + 1:
-        raise ValueError(f'H_array needs N_qubits + 1 = {N_qubits + 1} entries, not {len(H_array)}')
+def Check_Inputs(N_qubits, r_0, sigma_0, H_array, r_ham_array, H_q_0_array, rho_q_0, t_array, E, D, d, Gamma_z):
+    for name, value in (('H_array', H_array), ('r_ham_array', r_ham_array)):
+        if len(value) != N_qubits + 1:
+            raise ValueError(f'{name} needs N_qubits + 1 = {N_qubits + 1} entries, not {len(value)}')
+
+    named = [('r_0', r_0), ('sigma_0', sigma_0), ('H_q_0_array', H_q_0_array), ('rho_q_0', rho_q_0), ('t_array', t_array),
+             ('E', E), ('D', D), ('d', d), ('Gamma_z', Gamma_z)]
+    named += [(f'H_array[{i}]', H) for i, H in enumerate(H_array)]
+    named += [(f'r_ham_array[{i}]', r) for i, r in enumerate(r_ham_array)]
+    for name, value in named:
+        if value is not None and not np.all(np.isfinite(value)):
+            raise ValueError(f'{name} has non-finite entries')
+
     for i, H in enumerate(H_array):
         Check_Symmetry(f'H_array[{i}]', H, 1)
     Check_Symmetry('sigma_0', sigma_0, 1)
+
+    scale = max(np.max(np.abs(M)) for M in (E, D, np.zeros(1)) if M is not None)
     if E is not None:
-        Check_Symmetry('E', E, -1)
+        Check_Symmetry('E', E, -1, scale)
     if D is not None:
-        Check_Symmetry('D', D, 1)
+        Check_Symmetry('D', D, 1, scale)
+        if np.min(np.linalg.eigvalsh(0.5*(D + D.T))) < -SYMMETRY_TOLERANCE*scale:
+            raise ValueError('D must be positive semidefinite')
+    if d is not None and np.max(np.abs(np.imag(d))) > SYMMETRY_TOLERANCE*np.max(np.abs(d)):
+        raise ValueError('d must be real')
 
 
 def Dynamics_Linear(N_qubits, n_modes, r_0, sigma_0, H_array, r_ham_array, H_q_0_array, rho_q_0, t_array,
@@ -280,11 +376,19 @@ def Dynamics_Linear(N_qubits, n_modes, r_0, sigma_0, H_array, r_ham_array, H_q_0
     Gamma_z : (N,) qubit dephasing rates
 
     Returns sigma_JK_t, r_JK_t, C_JK_t, phi_JK_t.
-    Raises ValueError for inputs the doubling cannot represent: it needs sigma symmetric and
-    a^T = -dd, which symmetric H_array entries and an antisymmetric E provide.
-    Raises numpy.linalg.LinAlgError if X_jk becomes singular or sigma_jk overflows, to working precision.
+    Regime: sigma_jk may be very large where the coupling H_J - H_K sees it, up to about 1e18, and on modes
+    the qubits do not touch without limit if the frame is aligned with them, so that H_array has exact zeros
+    there.  In a frame not aligned with such a mode the rounding of S_12 sigma destroys the cancellation that
+    hides it, and sigma of order 1e6 is the limit.  This is detected and raises: it is not a loss of accuracy
+    the solver can avoid, because the input itself no longer holds the coupled block of sigma to working precision.
+    Accuracy of r in the uncoupled direction is the first to go, and is what sets this limit.
+
+    Raises ValueError for inputs the doubling cannot represent, or non-finite ones: it needs sigma symmetric
+    and a^T = -dd, which symmetric H_array entries and an antisymmetric E provide.
+    Raises numpy.linalg.LinAlgError, naming the cause and the time, if X_jk becomes singular, sigma_jk, r_jk or s_jk
+    overflow, rounding as above passes its limit, or the substep budget runs out.
     """
-    Check_Inputs(N_qubits, sigma_0, H_array, E, D)
+    Check_Inputs(N_qubits, r_0, sigma_0, H_array, r_ham_array, H_q_0_array, rho_q_0, t_array, E, D, d, Gamma_z)
 
     N2 = 2**N_qubits
     dim = 2*n_modes

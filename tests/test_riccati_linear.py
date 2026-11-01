@@ -439,9 +439,82 @@ def test_remainder_guard_counts_sigma():
 def test_observed_rows_follow_the_coupling():
     """H_q = diag(1, 0) only touches x directly, but H_m rotates p into it, so both are observed."""
     H_m, H_q = np.eye(2), np.diag([1.0, 0.0])
-    assert Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_m + H_q, H_m - H_q)).shape == (2, 2)
-    assert Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_q, -H_q)).shape == (1, 2)
-    assert Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_m, H_m)).shape == (0, 2)
+    assert Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_m + H_q, H_m - H_q))[0].shape == (2, 2)
+    assert Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_q, -H_q))[0].shape == (1, 2)
+    assert Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_m, H_m))[0].shape == (0, 2)
+
+
+def test_small_genuine_coupling_is_observed():
+    """A coupling of 1e-8 relative to H_m is physics, and must not be taken for round-off."""
+    H_m, H_q = np.eye(2), 1e-8*np.eye(2)
+    rows, dropped = Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_m + H_q, H_m - H_q))
+    assert rows.shape == (2, 2)
+    assert dropped == 0
+
+
+def test_round_off_rows_are_not_taken_for_coupling():
+    """A rotated frame leaves singular values of ~1e-16 for the uncoupled mode: they are not coupling,
+    but neither are they zero, so they are reported to be counted against sigma.
+    """
+    H_m, H_q, _ = Rotated_Problem(np.eye(2))
+    rows, dropped = Riccati_Linear.Observed_Rows(Doubling_Matrix(2, H_m + H_q, H_m - H_q))
+    assert rows.shape == (2, 4)
+    assert 0 < dropped < Riccati_Linear.OBSERVED_TOLERANCE
+
+
+def test_dropped_rows_are_counted_in_the_remainder():
+    """A sigma that Q does not see still counts through the rows dropped from Q."""
+    H_q = np.diag([0.0, 0.0, 1.0, 1.0])
+    A = Doubling_Matrix(2, np.eye(4) + H_q, np.eye(4) - H_q)
+    M = Riccati_Linear.Step_Generator(A, np.zeros(4, dtype=complex), np.zeros(4, dtype=complex))
+    propagators = Riccati_Linear.Step_Propagators(M, 0.05)
+    sigma = np.diag([1e12, 1e12, 1.0, 1.0]).astype(complex)
+    X = propagators(0)[1] + propagators(0)[2] @ sigma
+    assert Riccati_Linear.Accept_Step(propagators, 0, sigma, X)
+    propagators.dropped = 1e-3
+    assert not Riccati_Linear.Accept_Step(propagators, 0, sigma, X)
+
+
+def test_acceptance_constants_keep_the_proof():
+    """The guarantee of Accept_Step rests on this inequality and on the two numbers below."""
+    assert Riccati_Linear.MAX_X_DISTANCE == 0.75
+    assert Riccati_Linear.MAX_INTERPOLATION_ERROR == 0.15
+    assert 9/8*Riccati_Linear.MAX_X_DISTANCE + Riccati_Linear.MAX_INTERPOLATION_ERROR < 1
+
+    tau = np.linspace(0, 1, 200001)
+    lebesgue = np.abs(4*tau*(1 - tau)) + np.abs(tau*(2*tau - 1))
+    assert abs(np.max(lebesgue) - 9/8) < 1e-9
+    assert abs(np.max(np.abs(tau*(tau - 0.5)*(tau - 1)))/6 - Riccati_Linear.INTERPOLATION_BOUND) < 1e-11
+
+
+def test_remainder_formula():
+    A = Doubling_Matrix(1, np.eye(2), -np.eye(2))
+    M = Riccati_Linear.Step_Generator(A, np.zeros(2, dtype=complex), np.zeros(2, dtype=complex))
+    propagators = Riccati_Linear.Step_Propagators(M, 0.8)
+    norm = np.linalg.norm(A)*0.8/2
+    assert abs(propagators(1)[9] - np.sqrt(3)/216*norm**3*np.exp(norm)) < 1e-14
+
+
+@pytest.mark.parametrize('seed', range(10))
+def test_remainder_bounds_the_interpolation_error(seed):
+    """The bound itself, tested against the real path rather than against its own formula."""
+    rng = np.random.default_rng(seed)
+    (_, _, H_array, _, _, _), _ = Problem(1, 2, seed=seed)
+    A = Doubling_Matrix(2, H_array[0] + H_array[1], H_array[0] - H_array[1])
+    M = Riccati_Linear.Step_Generator(A, np.zeros(4, dtype=complex), np.zeros(4, dtype=complex))
+    sigma = Symmetric(rng, 4, 3.0) + 1j*Symmetric(rng, 4, 3.0)
+    h = rng.uniform(0.3, 1.5)
+    propagators = Riccati_Linear.Step_Propagators(M, h)
+    size = np.sqrt(4 + np.linalg.norm(propagators.observed @ sigma)**2)
+
+    def Z(tau):
+        P = expm(A*tau)
+        return P[:4, :4] + P[:4, 4:] @ sigma - np.eye(4)
+
+    middle, end = Z(h/2), Z(h)
+    for tau in np.linspace(0, 1, 101):
+        interpolant = 4*tau*(1 - tau)*middle + tau*(2*tau - 1)*end
+        assert np.linalg.norm(Z(tau*h) - interpolant) <= propagators(0)[9]*size
 
 
 @pytest.mark.parametrize('seed', range(5))
@@ -452,7 +525,7 @@ def test_X_only_sees_the_observed_part_of_sigma(seed):
     H_q[2:, 2:] = Symmetric(rng, 2, 1.0)
     H_m = np.block([[SIGMA_X, np.zeros((2, 2))], [np.zeros((2, 2)), np.eye(2)]])
     A = Doubling_Matrix(2, H_m + H_q, H_m - H_q)
-    Q = Riccati_Linear.Observed_Rows(A)
+    Q, _ = Riccati_Linear.Observed_Rows(A)
     assert Q.shape == (2, 4)
     sigma = Symmetric(rng, 4, 1.0)
     P = expm(0.7*A)
@@ -463,7 +536,7 @@ def test_end_point_guard_rejects_a_step_that_ends_far_from_one():
     sigma = np.eye(2, dtype=complex)*2.0
     propagators, X = Rotation_Propagators(0.5, sigma)
     size = np.sqrt(2 + np.linalg.norm(sigma)**2)
-    assert propagators(0)[-1]*size < Riccati_Linear.MAX_INTERPOLATION_ERROR
+    assert propagators(0)[9]*size < Riccati_Linear.MAX_INTERPOLATION_ERROR
     assert np.linalg.norm(X - np.eye(2)) > Riccati_Linear.MAX_X_DISTANCE
     assert not Riccati_Linear.Accept_Step(propagators, 0, sigma, X)
 
@@ -509,6 +582,145 @@ def test_strong_squeezing_keeps_its_digits():
     assert np.max(np.abs(r[-1, 1, 0, :, 0]/np.array([s*x_0/z_1, p_0/z_2]) - 1)) < 1e-12
 
 
+def Rotated_Problem(block):
+    """Mode 1 evolves under block and the qubit only touches mode 2: H_m, H_q in a beam-splitter frame, and R."""
+    c, s = np.cos(0.6), np.sin(0.6)
+    R = np.array([[c, 0, s, 0], [0, c, 0, s], [-s, 0, c, 0], [0, -s, 0, c]])
+    H_m, H_q = np.zeros((4, 4)), np.zeros((4, 4))
+    H_m[:2, :2], H_m[2:, 2:] = block, np.eye(2)
+    H_q[2:, 2:] = 0.3*np.eye(2)
+    H_m_rotated, H_q_rotated = R @ H_m @ R.T, R @ H_q @ R.T
+    return 0.5*(H_m_rotated + H_m_rotated.T), 0.5*(H_q_rotated + H_q_rotated.T), R
+
+
+def Rotated_Run(block, sigma_aligned, tau):
+    """
+    The same physics twice: aligned, where it is exact to round-off, and rotated.
+    Returns the error of the rotated run, relative, on rho_q off-diagonal and on r off-diagonal.
+    """
+    H_m, H_q, R = Rotated_Problem(block)
+    H_m_aligned, H_q_aligned = R.T @ H_m @ R, R.T @ H_q @ R
+    H_m_aligned, H_q_aligned = 0.5*(H_m_aligned + H_m_aligned.T), 0.5*(H_q_aligned + H_q_aligned.T)
+    H_m_aligned[np.abs(H_m_aligned) < 1e-12], H_q_aligned[np.abs(H_q_aligned) < 1e-12] = 0, 0
+    r_0 = np.array([[0.1], [0.2], [0.3], [-0.4]], dtype=complex)
+    t = np.linspace(0, tau, 21)
+    force, rho_q_0 = np.zeros((4, 1)), np.ones((2, 2))
+    _, r_true, C_true, phi_true = Dynamics_Linear(1, 2, r_0, sigma_aligned, [H_m_aligned, H_q_aligned], [force, force], np.zeros(1), rho_q_0, t)
+    _, r, C, phi = Dynamics_Linear(1, 2, R @ r_0, R @ sigma_aligned @ R.T, [H_m, H_q], [force, force], np.zeros(1), rho_q_0, t)
+    rho_error = np.max(np.abs(np.exp(-(C - C_true)[:, 1, 0] + 1j*(phi - phi_true)[:, 1, 0]) - 1))
+    difference = np.abs(np.einsum('ab,tb->ta', R.T, r[:, 1, 0, :, 0]) - r_true[:, 1, 0, :, 0])
+    return rho_error, np.max(np.max(difference, axis=1)/(1 + np.max(np.abs(r_true[:, 1, 0, :, 0]), axis=1)))
+
+
+def Unstable_Run(tau):
+    return Rotated_Run(SIGMA_X, np.eye(4, dtype=complex), tau)
+
+
+def Squeezed_Run(s):
+    return Rotated_Run(np.eye(2), np.diag([s, 1/s, 1.0, 1.0]).astype(complex), 10.0)
+
+
+@pytest.mark.parametrize('run, value', [(Unstable_Run, 6.0), (Unstable_Run, 8.0), (Unstable_Run, 10.0),
+                                        (Squeezed_Run, 1e4), (Squeezed_Run, 1e5), (Squeezed_Run, 1e6)])
+def test_rotated_frame_answers_within_its_regime(run, value):
+    """Guards against a limit set too tight.  bde56b2 passes this: it was right here."""
+    rho_error, r_error = run(value)
+    assert rho_error < 1e-8
+    assert r_error < 1e-6
+
+
+@pytest.mark.parametrize('run, value', [(Unstable_Run, 11.0), (Unstable_Run, 12.0), (Unstable_Run, 13.0), (Unstable_Run, 14.0),
+                                        (Squeezed_Run, 1e7), (Squeezed_Run, 1e8), (Squeezed_Run, 1e9), (Squeezed_Run, 1e10)])
+def test_rotated_frame_is_right_or_raises(run, value):
+    """Never silently wrong.  bde56b2 returns r wrong by up to 21 here with no error, and rho_q by 2e-4."""
+    try:
+        rho_error, r_error = run(value)
+    except np.linalg.LinAlgError as error:
+        assert 'does not resolve' in str(error)
+        return
+    assert rho_error < 1e-5
+    assert r_error < 1e-5
+
+
+@pytest.mark.parametrize('run, value', [(Unstable_Run, 14.0), (Unstable_Run, 16.0), (Unstable_Run, 20.0), (Unstable_Run, 100.0),
+                                        (Squeezed_Run, 1e10), (Squeezed_Run, 1e12), (Squeezed_Run, 1e14)])
+def test_rotated_frame_raises_and_names_the_cause(run, value):
+    """bde56b2 returned 1.0 on rho_q after 146 s at T = 16, and did not finish at T = 20."""
+    with pytest.raises(np.linalg.LinAlgError, match='does not resolve, to working precision'):
+        run(value)
+
+
+def test_rounding_limit_guards_zero_r_too():
+    """With r = 0, x = 0 and only the estimate on s can fire, so the limit on it must be enough alone."""
+    H_m, H_q, R = Rotated_Problem(SIGMA_X)
+    force = np.zeros((4, 1))
+    arguments = (np.zeros((4, 1), dtype=complex), np.eye(4, dtype=complex), [H_m, H_q], [force, force], np.zeros(1), np.ones((2, 2)))
+    Dynamics_Linear(1, 2, *arguments, np.linspace(0, 12, 21))
+    with pytest.raises(np.linalg.LinAlgError, match='does not resolve'):
+        Dynamics_Linear(1, 2, *arguments, np.linspace(0, 14, 21))
+
+
+def test_rounding_limits_are_pinned():
+    assert Riccati_Linear.MAX_ROUNDING_ERROR_S == 1e-6
+    assert Riccati_Linear.MAX_ROUNDING_ERROR_R == 3e-5
+
+
+def test_rounding_estimate_does_not_depend_on_the_grid():
+    """It is meant to be a sum over the path, so that halving cannot dodge it."""
+    H_m, H_q, R = Rotated_Problem(np.eye(2))
+    force = np.zeros((4, 1))
+    sigma = R @ np.diag([1e5, 1e-5, 1.0, 1.0]) @ R.T
+    estimates = []
+    for points in (21, 81, 321):
+        t = np.linspace(0, 10, points)
+        A = Doubling_Matrix(2, H_m + H_q, H_m - H_q)
+        M = Riccati_Linear.Step_Generator(A, np.zeros(4, dtype=complex), np.zeros(4, dtype=complex))
+        propagators = Riccati_Linear.Step_Propagators(M, t[1])
+        ledger, state = Riccati_Linear.Step_Ledger(10**7), sigma.astype(complex)
+        for _ in range(points - 1):
+            for _ in range(2**propagators.base_level):
+                state, _, _ = Riccati_Linear.Advance(propagators, propagators.base_level, state, np.zeros(4, dtype=complex), 0.0, ledger)
+        estimates.append(ledger.rounding)
+    assert max(estimates) < 1.5*min(estimates)
+    assert min(estimates) > 1e-13
+
+
+def Rough_Budget(monkeypatch):
+    monkeypatch.setattr(Riccati_Linear, 'SUBSTEP_ALLOWANCE', 10)
+    monkeypatch.setattr(Riccati_Linear, 'SUBSTEPS_PER_BASE_STEP', 1)
+
+
+def test_substep_budget_raises(monkeypatch):
+    """Near a pole a run needs more substeps than the grid asks for, which a tight budget refuses."""
+    Rough_Budget(monkeypatch)
+    sigma_0_jk = np.broadcast_to(np.eye(2, dtype=complex), (2, 2, 2, 2)).copy()
+    sigma_0_jk[0, 1] = (0.02 + 1j)*np.eye(2)
+    with pytest.raises(np.linalg.LinAlgError, match='gave up after 22 substeps'):
+        Dynamics_Linear(1, 1, np.zeros((2, 2, 2, 1), dtype=complex), sigma_0_jk, [np.zeros((2, 2)), -np.eye(2)],
+                        [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), np.linspace(0, 3, 13))
+
+
+def test_substep_budget_is_far_from_legitimate_work():
+    """Long and strongly squeezed runs must stay a factor 20 under their budget.  The worst here, the
+    repeated collapse at s = 1e-8, sits a factor 58 under it.
+    """
+    ledgers = []
+    original = Riccati_Linear.Step_Ledger
+
+    def Recording(limit):
+        ledgers.append(original(limit))
+        return ledgers[-1]
+
+    Riccati_Linear.Step_Ledger = Recording
+    try:
+        for s, tau in ((1e16, 0.9), (1e-8, 30.0), (2.5, 300.0)):
+            Dynamics_Linear(1, 1, np.array([[0.3], [0.2]], dtype=complex), np.diag([1/s, s]).astype(complex), [np.zeros((2, 2)), np.eye(2)],
+                            [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), np.linspace(0, tau, 61))
+    finally:
+        Riccati_Linear.Step_Ledger = original
+    assert max(ledger.substeps/ledger.limit for ledger in ledgers) < 0.05
+
+
 def test_singular_X_raises():
     """X = (cos t + i (i) sin t) 1 vanishes at t = pi/4, between two grid points."""
     sigma_0 = 1j*np.eye(2, dtype=complex)
@@ -518,7 +730,7 @@ def test_singular_X_raises():
         Dynamics_Linear(1, 1, np.zeros((2, 1), dtype=complex), sigma_0, H_array, [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), t)
 
 
-@pytest.mark.parametrize('s', [1e10, 1e14, 1e16])
+@pytest.mark.parametrize('s', [1e10, 1e14, 1e16, 1e18])
 def test_extreme_squeezing_matches_closed_form(s):
     x_0, p_0, tau = 0.3, 0.2, 0.9
     _, r, C, phi = Dynamics_Linear(1, 1, np.array([[x_0], [p_0]], dtype=complex), np.diag([1/s, s]).astype(complex), [np.zeros((2, 2)), np.eye(2)],
@@ -530,7 +742,7 @@ def test_extreme_squeezing_matches_closed_form(s):
 
 
 def test_squeezing_beyond_resolution_says_so():
-    s = 1e20
+    s = 1e19
     with pytest.raises(np.linalg.LinAlgError, match='too large, to working precision'):
         Dynamics_Linear(1, 1, np.zeros((2, 1), dtype=complex), np.diag([1/s, s]).astype(complex), [np.zeros((2, 2)), np.eye(2)],
                         [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), np.linspace(0, 0.9, 3))
@@ -546,6 +758,10 @@ def test_sigma_overflow_says_so():
         Dynamics_Linear(1, 1, *arguments, t)
     sigma = Dynamics_Linear(1, 1, *arguments, t[:9])[0]
     assert np.max(np.abs(sigma[-1, 0, 0]/np.exp(2*t[8]) - np.diag([1.0, 0.0]))) < 1e-9
+    # Here sigma is still finite on the last substep and overflows on reaching the last grid point,
+    # so no later step can trip on it.  The check at the grid point has to name sigma: r is nan by then too
+    with pytest.raises(np.linalg.LinAlgError, match='sigma overflowed double precision'):
+        Dynamics_Linear(1, 1, *arguments, np.linspace(0, 355, 11))
 
 
 def test_exceptional_point():
@@ -699,6 +915,60 @@ SKEW = np.array([[0.0, 1e-3], [0.0, 0.0]])
 def test_invalid_inputs_are_rejected(name, change):
     with pytest.raises(ValueError, match=name):
         Dynamics_Linear(**Invalid_Input(change))
+
+
+def test_symmetry_is_judged_per_matrix():
+    """An asymmetry of 2 on one branch must not hide beside 1e8 on another."""
+    def Change(arguments):
+        sigma = np.broadcast_to(arguments['sigma_0'], (2, 2, 2, 2)).copy()
+        sigma[1, 1] = 1e8*np.eye(2)
+        sigma[0, 1, 0, 1] += 2.0
+        return dict(sigma_0=sigma, r_0=np.broadcast_to(arguments['r_0'], (2, 2, 2, 1)).copy())
+    with pytest.raises(ValueError, match='sigma_0'):
+        Dynamics_Linear(**Invalid_Input(Change))
+
+
+def test_small_asymmetric_H_q_is_rejected():
+    """Entries of 1e-7 are real coupling here, wholly asymmetric, and no floor at 1 may let them pass."""
+    with pytest.raises(ValueError, match='H_array'):
+        Dynamics_Linear(**Invalid_Input(lambda a: dict(H_array=[a['H_array'][0], np.array([[0.0, 1e-7], [0.0, 0.0]])])))
+
+
+def test_noise_is_judged_against_the_larger_of_E_and_D():
+    """E and D share a B: Ladder round-off in a zero E must not count against that E's own size."""
+    Dynamics_Linear(**Invalid_Input(lambda a: dict(E=np.array([[1e-9, 0.0], [0.0, 0.0]]), D=np.eye(2))))
+
+
+@pytest.mark.parametrize('name, change', [
+    ('D must be positive', lambda a: dict(D=np.diag([1.0, -0.1]))),
+    ('d must be real', lambda a: dict(d=np.array([[0.1 + 0.1j], [0.2]]))),
+    ('r_ham_array', lambda a: dict(r_ham_array=a['r_ham_array'] + a['r_ham_array'][:1])),
+    ('r_ham_array', lambda a: dict(r_ham_array=a['r_ham_array'][:1])),
+], ids=['indefinite-D', 'complex-d', 'long-r', 'short-r'])
+def test_noise_and_force_inputs_are_rejected(name, change):
+    with pytest.raises(ValueError, match=name):
+        Dynamics_Linear(**Invalid_Input(change))
+
+
+@pytest.mark.parametrize('name', ['r_0', 'sigma_0', 'H_q_0_array', 'rho_q_0', 't_array', 'E', 'D', 'd', 'Gamma_z', 'H_array[1]', 'r_ham_array[0]'])
+@pytest.mark.parametrize('bad', [np.nan, np.inf], ids=['nan', 'inf'])
+def test_non_finite_input_fails_the_same_way_everywhere(name, bad):
+    def Change(arguments):
+        key = name.split('[')[0]
+        value = [np.array(M, dtype=complex) for M in arguments[key]] if '[' in name else np.array(arguments[key], dtype=complex)
+        target = value[int(name[-2])] if '[' in name else value
+        target.flat[0] = bad
+        return {key: value}
+    with pytest.raises(ValueError, match='non-finite'):
+        Dynamics_Linear(**Invalid_Input(Change))
+
+
+@pytest.mark.filterwarnings('ignore::RuntimeWarning')
+def test_first_moment_overflow_raises():
+    """r_0 = 1e160 gives s ~ 1e320: this used to come back as non-finite C and phi with no error."""
+    (_, sigma_0, H_array, r_array, H_q_0, rho_q_0), _ = Problem(1, 1)
+    with pytest.raises(np.linalg.LinAlgError, match='r or s overflowed'):
+        Dynamics_Linear(1, 1, np.array([[1e160], [1e160]], dtype=complex), sigma_0, H_array, r_array, H_q_0, rho_q_0, np.linspace(0, 1, 5))
 
 
 def test_validation_passes_the_complex64_floor():
