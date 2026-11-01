@@ -111,7 +111,7 @@ def test_linear_matches_ode(N_qubits, n_modes, open_system):
     assert max(Max_Errors(ode, linear)) < 2e-8
 
 
-def Joint_ODE(N_qubits, n_modes, problem, kwargs, t):
+def Joint_ODE(N_qubits, n_modes, problem, kwargs, t, rtol=1e-13, atol=1e-14):
     """
     sigma, r and s integrated together, one branch pair at a time.  The library's nested ODEs
     feed sigma and r through interp1d on t_eval, which on this grid (largest gap 0.05) limits
@@ -146,7 +146,7 @@ def Joint_ODE(N_qubits, n_modes, problem, kwargs, t):
                 return np.concatenate((sigma_dot.ravel(), r_dot, [s_dot]))
 
             y_0 = np.concatenate((sigma_0.ravel(), np.ravel(r_0), [0]))
-            y = solve_ivp(Derivative, (t[0], t[-1]), y_0, t_eval=t, method='DOP853', rtol=1e-13, atol=1e-14).y.T
+            y = solve_ivp(Derivative, (t[0], t[-1]), y_0, t_eval=t, method='DOP853', rtol=rtol, atol=atol).y.T
             sigma_t[:, j, k] = y[:, :dim**2].reshape(-1, dim, dim)
             r_t[:, j, k, :, 0] = y[:, dim**2:-1]
             s_t[:, j, k] = y[:, -1]
@@ -245,7 +245,8 @@ def test_uniform_grid_needs_one_propagator(monkeypatch):
     problem, _ = Problem(1, 1)
     calls = Count_Exponentials(monkeypatch)
     Dynamics_Linear(1, 1, *problem, np.linspace(0, 1, 1001))
-    assert len(calls) == 3
+    # Three branch pairs, each with the step and the midpoint of Accept_Step
+    assert len(calls) == 2*3
 
 
 def test_non_uniform_grid_reuses_repeated_steps(monkeypatch):
@@ -253,12 +254,12 @@ def test_non_uniform_grid_reuses_repeated_steps(monkeypatch):
     calls = Count_Exponentials(monkeypatch)
     t = np.concatenate((np.linspace(0, 1, 101), 1 + 0.5*np.arange(1, 5)))
     Dynamics_Linear(1, 1, *problem, t)
-    assert len(calls) == 2*3
+    assert len(calls) == 2*2*3
 
 
 def test_steps_are_subdivided():
     H_array = [50*np.eye(2), 5*np.eye(2)]
-    assert Riccati_Linear.Base_Level(Doubling_Matrix(1, H_array[0] + H_array[1], H_array[0] - H_array[1]), 1.0) == 6
+    assert Riccati_Linear.Base_Level(Doubling_Matrix(1, H_array[0] + H_array[1], H_array[0] - H_array[1]), 1.0) == 7
 
 
 def Continuous_Log(z):
@@ -284,13 +285,13 @@ def test_log_det_stays_continuous_through_many_windings(stride):
     assert np.max(np.abs(-C[:, 1, 0] + 1j*phi[:, 1, 0] - exact)) < 1e-10
 
 
-@pytest.mark.parametrize('n_modes', [1, 2, 3])
+@pytest.mark.parametrize('n_modes', [1, 2, 3, 10])
 def test_near_pole_is_resolved(n_modes):
     """X = (cos(t) + i (eps + i) sin(t)) 1 passes within about eps of zero at t = pi/4, off the
     real axis.  Stepping over it would lose a phase of pi per eigenvalue of X.
 
-    With n_modes > 1 the four or six eigenvalues can each be within pi/2 while their phases
-    add up past pi, so the log of det X would be wrong: the logs must be summed one by one.
+    With enough modes the phases of the eigenvalues add up past pi within one accepted step, even
+    with each of them small, so the log of det X would be wrong: the logs must be summed one by one.
     """
     eps = 0.02
     dim = 2*n_modes
@@ -306,9 +307,200 @@ def test_near_pole_is_resolved(n_modes):
     assert np.max(np.abs(-C[:, 0, 1] + 1j*phi[:, 0, 1] - exact)) < 1e-8
 
 
+def test_phases_of_many_eigenvalues_are_added_one_by_one():
+    """X = exp(i t) 1 for vacuum, so s = -i n t.  With 12 modes each step of 0.135 turns det X by
+    3.24 rad, past pi, while every one of the 24 eigenvalues is well within the ball.  The step is
+    tuned: it has to be one Accept_Step takes without halving, and few are that large.
+    """
+    n_modes, dt = 12, 0.135
+    dim = 2*n_modes
+    A = Doubling_Matrix(n_modes, np.eye(dim), -np.eye(dim))
+    M = Riccati_Linear.Step_Generator(A, np.zeros(dim, dtype=complex), np.zeros(dim, dtype=complex))
+    propagators = Riccati_Linear.Step_Propagators(M, dt)
+    sigma_1 = np.eye(dim, dtype=complex)
+    assert Riccati_Linear.Accept_Step(propagators, 0, sigma_1, propagators(0)[1] + propagators(0)[2])
+
+    force = np.zeros((dim, 1))
+    t = dt*np.arange(11)
+    _, _, C, phi = Dynamics_Linear(1, n_modes, np.zeros((dim, 1), dtype=complex), np.eye(dim, dtype=complex), [np.zeros((dim, dim)), np.eye(dim)],
+                                   [force, force], np.zeros(1), np.ones((2, 2)), t)
+    assert np.max(np.abs(C[:, 1, 0])) < 1e-12
+    assert np.max(np.abs(phi[:, 1, 0] + n_modes*t)) < 1e-11
+
+
+def test_eigenvalues_exchanging_around_zero():
+    """Reproducer from review.  Over this one step X is non-normal and its two eigenvalues swap
+    around 0 while det X winds by 2 pi, yet both end with |arg| < pi/2.  Checking those end points
+    gave exp(s) with the wrong sign on the 2-point grid and no warning.
+    """
+    H_j = np.array([[1.0993, 0.9102], [0.9102, -1.4773]])
+    H_k = np.array([[1.2505, 0.3759], [0.3759, 0.9604]])
+    H_array = [(H_j + H_k)/2, (H_k - H_j)/2]
+    sigma = np.array([[0.009 - 129.494j, -0.001 - 51.433j], [-0.001 - 51.433j, 0.011 - 24.39j]])
+    sigma_0_jk = np.broadcast_to(np.eye(2, dtype=complex), (2, 2, 2, 2)).copy()
+    sigma_0_jk[0, 1] = sigma
+    r_0 = np.zeros((2, 1), dtype=complex)
+    r_0_jk = np.broadcast_to(r_0, (2, 2, 2, 1))
+    forces = [ZERO_FORCE, ZERO_FORCE]
+    tau = 0.3898
+    reference = Joint_ODE(1, 1, (r_0, sigma, H_array, forces, np.zeros(1), None), {}, np.array([0, tau]))
+    exact = np.exp(-reference[2][-1, 0, 1] + 1j*reference[3][-1, 0, 1])
+    assert np.real(exact) < 0
+    for points in (2, 3, 5, 9, 17, 65):
+        _, _, C, phi = Dynamics_Linear(1, 1, r_0_jk, sigma_0_jk, H_array, forces, np.zeros(1), np.ones((2, 2)), np.linspace(0, tau, points))
+        assert abs(np.exp(-C[-1, 0, 1] + 1j*phi[-1, 0, 1]) - exact) < 1e-9
+
+
+@pytest.mark.parametrize('points', [3, 13, 121], ids=['coarse', 'medium', 'fine'])
+def test_non_normal_X_near_poles(points):
+    """Two modes rotate at different rates, each passing near a pole of its own, so X is not a
+    multiple of 1.  A two-mode squeezer S then makes it non-normal: sigma -> S sigma S^T and
+    H -> S^-T H S^-1 give X -> S^-T X S^T, which has the same det, so s stays in closed form.
+    """
+    eps, rates, squeezing = 0.03, np.array([1.0, 1.7]), 0.8
+    ch, sh = np.cosh(squeezing), np.sinh(squeezing)
+    S = np.array([[ch, 0, sh, 0], [0, ch, 0, -sh], [sh, 0, ch, 0], [0, -sh, 0, ch]])
+    S_inverse = np.linalg.inv(S)
+    H_q = S_inverse.T @ np.diag(np.repeat(-rates, 2)) @ S_inverse
+    sigma = S @ np.diag(np.repeat((eps + 1j)*np.ones(2), 2)) @ S.T
+    assert np.max(np.abs(H_q @ sigma - (H_q @ sigma).conj().T*0 - sigma @ H_q)) > 0.1
+
+    sigma_0_jk = np.broadcast_to(np.eye(4, dtype=complex), (2, 2, 4, 4)).copy()
+    sigma_0_jk[0, 1] = sigma
+    force = np.zeros((4, 1))
+    t = np.linspace(0, 3, points)
+    _, _, C, phi = Dynamics_Linear(1, 2, np.zeros((2, 2, 4, 1), dtype=complex), sigma_0_jk, [np.zeros((4, 4)), H_q], [force, force],
+                                   np.zeros(1), np.ones((2, 2)), t)
+
+    fine = np.linspace(0, 3, 1200001)
+    exact = -sum(Continuous_Log(np.cos(rate*fine) + 1j*(eps + 1j)*np.sin(rate*fine)) for rate in rates)
+    assert np.max(np.abs(-C[:, 0, 1] + 1j*phi[:, 0, 1] - exact[::1200000//(points - 1)])) < 1e-7
+
+
+@pytest.mark.parametrize('seed', range(40))
+def test_accepted_steps_stay_near_one_on_the_whole_path(seed):
+    """The guarantee behind Accept_Step: if a step is accepted, ||X(t) - 1|| < 1 for all t in it."""
+    rng = np.random.default_rng(seed)
+    (_, _, H_array, _, _, _), _ = Problem(1, 2, seed=seed)
+    A = Doubling_Matrix(2, H_array[0] + H_array[1], H_array[0] - H_array[1])
+    M = Riccati_Linear.Step_Generator(A, np.zeros(4, dtype=complex), np.zeros(4, dtype=complex))
+    sigma = Symmetric(rng, 4, 10.0**rng.uniform(-1, 4)) + 1j*Symmetric(rng, 4, 10.0**rng.uniform(-1, 4))
+    propagators = Riccati_Linear.Step_Propagators(M, rng.uniform(0.2, 2))
+    level = next(level for level in range(propagators.base_level, propagators.base_level + 60)
+                 if Riccati_Linear.Accept_Step(propagators, level, sigma, propagators(level)[1] + propagators(level)[2] @ sigma))
+    for tau in np.linspace(0, 1, 201)*propagators(level)[0]:
+        P = expm(A*tau)
+        assert np.linalg.norm(P[:4, :4] + P[:4, 4:] @ sigma - np.eye(4)) < 1
+
+
+def Rotation_Propagators(tau, sigma):
+    """X(t) = cos(t) 1 + i sin(t) sigma, which returns to 1 at t = 2 pi k while leaving the ball on the way."""
+    A = Doubling_Matrix(1, np.eye(2), -np.eye(2))
+    M = Riccati_Linear.Step_Generator(A, np.zeros(2, dtype=complex), np.zeros(2, dtype=complex))
+    propagators = Riccati_Linear.Step_Propagators(M, tau)
+    return propagators, propagators(0)[1] + propagators(0)[2] @ sigma
+
+
+def test_remainder_guard_alone_rejects_a_path_that_leaves_and_returns():
+    """At t = 4 pi both samples, h/2 and h, sit exactly on X = 1: only the remainder can object."""
+    sigma = np.eye(2, dtype=complex)*0.5
+    propagators, X = Rotation_Propagators(4*np.pi, sigma)
+    assert np.linalg.norm(X - np.eye(2)) < 1e-12
+    assert np.linalg.norm(propagators(1)[1] + propagators(1)[2] @ sigma - np.eye(2)) < 1e-12
+    assert not Riccati_Linear.Accept_Step(propagators, 0, sigma, X)
+
+
+def test_midpoint_guard_alone_rejects_a_path_that_returns_at_the_end(monkeypatch):
+    """At t = 2 pi the end point is X = 1 and only the midpoint X = -1 shows the excursion."""
+    monkeypatch.setattr(Riccati_Linear, 'MAX_INTERPOLATION_ERROR', np.inf)
+    sigma = np.eye(2, dtype=complex)*0.5
+    propagators, X = Rotation_Propagators(2*np.pi, sigma)
+    assert np.linalg.norm(X - np.eye(2)) < 1e-12
+    assert not Riccati_Linear.Accept_Step(propagators, 0, sigma, X)
+
+
+def test_remainder_guard_counts_sigma():
+    """A tiny coupling and a sigma of about 1e3 tuned so that X(h) = 1 exactly.  The samples look
+    perfect, but with sigma that large they say nothing about the path between them.
+    """
+    A = Doubling_Matrix(1, np.eye(2) + 1e-3*np.diag([1.0, 2.0]), np.eye(2) - 1e-3*np.diag([1.0, 2.0]))
+    M = Riccati_Linear.Step_Generator(A, np.zeros(2, dtype=complex), np.zeros(2, dtype=complex))
+    propagators = Riccati_Linear.Step_Propagators(M, 0.4)
+    _, S_11, S_12, *_ = propagators(0)
+    sigma = np.linalg.solve(S_12, np.eye(2) - S_11)
+    X = S_11 + S_12 @ sigma
+    _, S_11_half, S_12_half, *_ = propagators(1)
+    assert np.linalg.norm(sigma) > 100
+    assert np.linalg.norm(X - np.eye(2)) < 1e-9
+    assert np.linalg.norm(S_11_half + S_12_half @ sigma - np.eye(2)) < Riccati_Linear.MAX_X_DISTANCE
+    assert not Riccati_Linear.Accept_Step(propagators, 0, sigma, X)
+
+
+def test_observed_rows_follow_the_coupling():
+    """H_q = diag(1, 0) only touches x directly, but H_m rotates p into it, so both are observed."""
+    H_m, H_q = np.eye(2), np.diag([1.0, 0.0])
+    assert Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_m + H_q, H_m - H_q)).shape == (2, 2)
+    assert Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_q, -H_q)).shape == (1, 2)
+    assert Riccati_Linear.Observed_Rows(Doubling_Matrix(1, H_m, H_m)).shape == (0, 2)
+
+
+@pytest.mark.parametrize('seed', range(5))
+def test_X_only_sees_the_observed_part_of_sigma(seed):
+    """What makes ||(1, Q sigma)|| a valid bound: X(t) is the same from sigma and from Q^H Q sigma."""
+    rng = np.random.default_rng(seed)
+    H_q = np.zeros((4, 4))
+    H_q[2:, 2:] = Symmetric(rng, 2, 1.0)
+    H_m = np.block([[SIGMA_X, np.zeros((2, 2))], [np.zeros((2, 2)), np.eye(2)]])
+    A = Doubling_Matrix(2, H_m + H_q, H_m - H_q)
+    Q = Riccati_Linear.Observed_Rows(A)
+    assert Q.shape == (2, 4)
+    sigma = Symmetric(rng, 4, 1.0)
+    P = expm(0.7*A)
+    assert np.max(np.abs(P[:4, 4:] @ sigma - P[:4, 4:] @ Q.conj().T @ Q @ sigma)) < 1e-11
+
+
+def test_end_point_guard_rejects_a_step_that_ends_far_from_one():
+    sigma = np.eye(2, dtype=complex)*2.0
+    propagators, X = Rotation_Propagators(0.5, sigma)
+    size = np.sqrt(2 + np.linalg.norm(sigma)**2)
+    assert propagators(0)[-1]*size < Riccati_Linear.MAX_INTERPOLATION_ERROR
+    assert np.linalg.norm(X - np.eye(2)) > Riccati_Linear.MAX_X_DISTANCE
+    assert not Riccati_Linear.Accept_Step(propagators, 0, sigma, X)
+
+
+def test_unstable_bystander_mode_does_not_slow_the_solver(monkeypatch):
+    """Mode 1 is unstable and the qubit does not touch it, so sigma ~ exp(2 lam t) reaches 1e86 there
+    but never enters X.  A bound on all of sigma would need of order 1e28 substeps per grid step.
+    """
+    lam, tau = 1.0, 100.0
+    t = np.linspace(0, tau, 21)
+    force = np.zeros((4, 1))
+    H_m = np.zeros((4, 4))
+    H_m[:2, :2], H_m[2:, 2:] = lam*SIGMA_X, np.eye(2)
+    H_q = np.zeros((4, 4))
+    H_q[2:, 2:] = 0.3*np.eye(2)
+    r_0 = np.array([[0.1], [0.2], [0.3], [-0.4]], dtype=complex)
+    steps = []
+    original = Riccati_Linear.Advance
+
+    def Budgeted_Advance(*arguments):
+        steps.append(1)
+        assert len(steps) < 100000, 'an unobserved sigma is forcing small steps'
+        return original(*arguments)
+
+    monkeypatch.setattr(Riccati_Linear, 'Advance', Budgeted_Advance)
+    sigma, _, C, phi = Dynamics_Linear(1, 2, r_0, np.eye(4, dtype=complex), [H_m, H_q], [force, force], np.zeros(1), np.ones((2, 2)), t)
+    assert np.max(np.abs(sigma[-1, 0, 1])) > 1e80
+
+    _, _, C_alone, phi_alone = Dynamics_Linear(1, 1, r_0[2:], np.eye(2, dtype=complex), [np.eye(2), 0.3*np.eye(2)], [ZERO_FORCE, ZERO_FORCE],
+                                               np.zeros(1), np.ones((2, 2)), t)
+    assert np.max(np.abs(C[:, 1, 0] - C_alone[:, 1, 0])) < 1e-11
+    assert np.max(np.abs(phi[:, 1, 0] - phi_alone[:, 1, 0])) < 1e-11
+
+
 def test_strong_squeezing_keeps_its_digits():
-    """On a coarse grid X has condition number ~1e8 here.  Limiting it per step gives 7e-14 on r
-    where inverting X directly gives 3e-9.
+    """X is kept near 1 here.  Inverting X directly, with condition number ~1e8 on this coarse
+    grid, gives 3e-9 on r.
     """
     s, x_0, p_0, tau = 1e8, 0.3, 0.2, 0.9
     _, r, _, _ = Dynamics_Linear(1, 1, np.array([[x_0], [p_0]], dtype=complex), np.diag([1/s, s]).astype(complex),
@@ -322,8 +514,38 @@ def test_singular_X_raises():
     sigma_0 = 1j*np.eye(2, dtype=complex)
     H_array = [np.zeros((2, 2)), -np.eye(2)]
     t = np.linspace(0, 1.5, 4)
-    with pytest.raises(np.linalg.LinAlgError, match='singular between t = 0.5 and t = 1.0'):
+    with pytest.raises(np.linalg.LinAlgError, match='between t = 0.5 and t = 1.0.*singular'):
         Dynamics_Linear(1, 1, np.zeros((2, 1), dtype=complex), sigma_0, H_array, [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), t)
+
+
+@pytest.mark.parametrize('s', [1e10, 1e14, 1e16])
+def test_extreme_squeezing_matches_closed_form(s):
+    x_0, p_0, tau = 0.3, 0.2, 0.9
+    _, r, C, phi = Dynamics_Linear(1, 1, np.array([[x_0], [p_0]], dtype=complex), np.diag([1/s, s]).astype(complex), [np.zeros((2, 2)), np.eye(2)],
+                                   [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), np.linspace(0, tau, 3))
+    z_1, z_2 = s*np.cos(tau) + 1j*np.sin(tau), np.cos(tau) + 1j*s*np.sin(tau)
+    exact = -1j*np.sin(tau)*(p_0**2/z_2 + s*x_0**2/z_1) - 0.5*(np.log(z_1) + np.log(z_2) - np.log(s))
+    assert np.max(np.abs(r[-1, 1, 0, :, 0]/np.array([s*x_0/z_1, p_0/z_2]) - 1)) < 1e-13
+    assert abs(-C[-1, 1, 0] + 1j*phi[-1, 1, 0] - exact) < 1e-13
+
+
+def test_squeezing_beyond_resolution_says_so():
+    s = 1e20
+    with pytest.raises(np.linalg.LinAlgError, match='too large, to working precision'):
+        Dynamics_Linear(1, 1, np.zeros((2, 1), dtype=complex), np.diag([1/s, s]).astype(complex), [np.zeros((2, 2)), np.eye(2)],
+                        [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), np.linspace(0, 0.9, 3))
+
+
+@pytest.mark.filterwarnings('ignore::RuntimeWarning')
+def test_sigma_overflow_says_so():
+    """A valid input: sigma_jj grows like exp(2 lam t) and leaves double precision near t = 355."""
+    t = np.linspace(0, 400, 11)
+    arguments = (np.zeros((2, 1), dtype=complex), np.eye(2, dtype=complex), [SIGMA_X, np.zeros((2, 2))],
+                 [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)))
+    with pytest.raises(np.linalg.LinAlgError, match='overflowed double precision'):
+        Dynamics_Linear(1, 1, *arguments, t)
+    sigma = Dynamics_Linear(1, 1, *arguments, t[:9])[0]
+    assert np.max(np.abs(sigma[-1, 0, 0]/np.exp(2*t[8]) - np.diag([1.0, 0.0]))) < 1e-9
 
 
 def test_exceptional_point():
@@ -453,6 +675,81 @@ def test_unknown_solver_is_rejected():
         state.Unitary_Dynamics_Numerical(H, np.linspace(0, 1, 3), solver='riccati')
 
 
+def Invalid_Input(change):
+    """Keyword arguments of Dynamics_Linear with one entry replaced."""
+    (r_0, sigma_0, H_array, r_array, H_q_0, rho_q_0), noise = Problem(1, 1, open_system=True)
+    arguments = dict(N_qubits=1, n_modes=1, r_0=r_0, sigma_0=sigma_0, H_array=H_array, r_ham_array=r_array, H_q_0_array=H_q_0,
+                     rho_q_0=rho_q_0, t_array=np.linspace(0, 1, 3), **noise)
+    return arguments | change(arguments)
+
+
+SKEW = np.array([[0.0, 1e-3], [0.0, 0.0]])
+
+
+@pytest.mark.parametrize('name, change', [
+    ('H_array', lambda a: dict(H_array=[a['H_array'][0] + SKEW, a['H_array'][1]])),
+    ('H_array', lambda a: dict(H_array=[a['H_array'][0], a['H_array'][1] + SKEW])),
+    ('sigma_0', lambda a: dict(sigma_0=a['sigma_0'] + SKEW)),
+    ('sigma_0', lambda a: dict(sigma_0=np.broadcast_to(a['sigma_0'], (2, 2, 2, 2)) + SKEW*np.array([[[[0.0]], [[1.0]]], [[[0.0]], [[0.0]]]]))),
+    ('E', lambda a: dict(E=a['E'] + np.eye(2)*1e-3)),
+    ('D', lambda a: dict(D=a['D'] + SKEW)),
+    ('H_array', lambda a: dict(H_array=a['H_array'][:1])),
+    ('H_array', lambda a: dict(H_array=a['H_array'] + a['H_array'][:1])),
+], ids=['H_m', 'H_q', 'sigma_0', 'sigma_0-per-branch', 'E', 'D', 'too-few-H', 'too-many-H'])
+def test_invalid_inputs_are_rejected(name, change):
+    with pytest.raises(ValueError, match=name):
+        Dynamics_Linear(**Invalid_Input(change))
+
+
+def test_validation_passes_the_complex64_floor():
+    """Ladder noise goes through U_N, which is complex64: asymmetries of ~1e-8 are round-off."""
+    noise = 3e-8*SKEW/1e-3
+    Dynamics_Linear(**Invalid_Input(lambda a: dict(D=a['D'] + noise, sigma_0=a['sigma_0'] + noise, H_array=[a['H_array'][0] + noise, a['H_array'][1]])))
+
+
+################################## Ladder basis ##################################
+
+def Ladder_State(kappa, H_array, t, solver):
+    """Through the public API with the input the notebooks use.  B_a = [[0, k], [0, 0]] is k D[a]."""
+    H = Hamiltonian(1, 1)
+    H.Initialize_Constant_Hamiltonians(H_array, [ZERO_FORCE, ZERO_FORCE], np.zeros(1))
+    state = Quantum_State(1, 1)
+    state.Initialize_Gaussian_State(np.array([[0.8], [-0.3]]), np.eye(2), np.ones((2, 2))/2)
+    state.Open_Dynamics_Numerical(H, Decoherence(1, 1, 'Ladder', kappa*np.array([[0.0, 1.0], [0.0, 0.0]])), t, solver=solver)
+    return state
+
+
+def test_ladder_noise_is_cavity_loss():
+    """Pins the current Decoherence behaviour, whose U^T B U differs from the paper's U^dag B U."""
+    decoherence = Decoherence(1, 1, 'Ladder', 0.3*np.array([[0.0, 1.0], [0.0, 0.0]]))
+    E, D = Gaussian.Get_Decoherence_Rates(1, 0.3*LOSS)
+    assert np.max(np.abs(decoherence.E_mat - E)) < 1e-7
+    assert np.max(np.abs(decoherence.D_mat - D)) < 1e-7
+
+
+def test_ladder_linear_matches_ode():
+    H_array = [np.eye(2) + 0.1*SIGMA_X, 0.2*np.eye(2)]
+    t = np.linspace(0, 4, 401)
+    linear = Ladder_State(0.3, H_array, t, 'linear')
+    ode = Ladder_State(0.3, H_array, t, 'ode')
+    assert np.max(np.abs(linear.sigma_JK_t - ode.sigma_JK_t)) < 1e-8
+    assert np.max(np.abs(linear.r_JK_t - ode.r_JK_t)) < 1e-8
+    assert np.max(np.abs(linear.rho_q_t - ode.rho_q_t)) < 1e-8
+
+
+def test_ladder_linear_matches_qutip():
+    """Ladder noise is only good to the complex64 floor of U_N, so ~1e-7 and not 1e-10 here."""
+    Q = Reference()
+    kappa = 0.3
+    H_array = [np.eye(2) + 0.1*SIGMA_X, 0.2*np.eye(2)]
+    t = np.linspace(0, 4, 5)
+    state = Ladder_State(kappa, H_array, t, 'linear')
+    rho, r, _, edge = Q.Reference_Dynamics(1, 1, 30, [(0, 1.0, 0.8, -0.3)], H_array, [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2))/2, t, B=kappa*LOSS)
+    assert edge < 1e-10
+    assert np.max(np.abs(state.rho_q_t - rho)) < 1e-6
+    assert np.max(np.abs(rho[..., None, None]*(state.r_JK_t - r))) < 1e-6
+
+
 ################################## Conditional rotations (App. l. 1653, main text l. 780) ##################################
 
 ROTATIONS = [(0.7, 0.4, 1.8), (0.3, 1.2, 0.4), (2.2, 2.6, 2.5), (-0.4, 4.4, 3.0)]
@@ -512,16 +809,24 @@ def test_rotation_squeezing_and_phase(theta_bar, theta_delta, s):
 
 
 def test_principal_log_form_of_s_off_as_typed_is_wrong():
-    """App. l. 1692 writes log(z_1 z_2 / s) for the whole product.  With the principal log that
-    leaves the correct branch once theta_Delta > pi/2.  l. 1696 (sqrt z_1 sqrt z_2) and the
-    continuous form in Rotation_Exponent are right.
+    """App. l. 1692 writes log(z_1 z_2 / s) for the whole product.  The phase of the product runs
+    with 2 theta_Delta, so the principal log is off by 2 pi i, and exp(s) by a sign, for theta_Delta
+    in (pi/2, 3 pi/2) mod 2 pi, and is right elsewhere.  l. 1696 (sqrt z_1 sqrt z_2) and the
+    continuous form in Rotation_Exponent are right everywhere.
     """
-    theta, s, x_0, p_0 = 2.6, 2.5, 0.8, -0.5
-    z_1, z_2 = s*np.cos(theta) + 1j*np.sin(theta), np.cos(theta) + 1j*s*np.sin(theta)
-    _, _, C, phi = Rotation(0.0, theta, s, x_0, p_0)
-    exact = np.exp(-C[-1, 1, 0] + 1j*phi[-1, 1, 0])
-    typed = -1j*np.sin(theta)*(p_0**2/z_2 + s*x_0**2/z_1) - 0.5*np.log(z_1*z_2/s)
-    assert abs(np.exp(typed) - exact) > 0.1
+    s, x_0, p_0 = 2.5, 0.8, -0.5
+
+    def Error(theta):
+        z_1, z_2 = s*np.cos(theta) + 1j*np.sin(theta), np.cos(theta) + 1j*s*np.sin(theta)
+        _, _, C, phi = Rotation(0.0, theta, s, x_0, p_0)
+        typed = -1j*np.sin(theta)*(p_0**2/z_2 + s*x_0**2/z_1) - 0.5*np.log(z_1*z_2/s)
+        return abs(np.exp(typed) - np.exp(-C[-1, 1, 0] + 1j*phi[-1, 1, 0]))
+
+    assert Error(2.6) > 0.1
+    assert Error(4.4) > 0.1
+    assert Error(1.2) < 1e-12
+    assert Error(5.2) < 1e-12
+    assert Error(1.2 + 2*np.pi) < 1e-12
 
 
 def test_rotation_of_coherent_state():
@@ -796,7 +1101,7 @@ def test_qutip_converges_to_the_linear_solution():
 
 
 def test_tab_1_as_typed_is_wrong():
-    """Tab. 1 (l. 408, 412) has +i Omega Dl Omega and -i sigma rm.  Tab. 3 has the opposite signs,
+    """Tab. 1 (l. 413, 417) has +i Omega Dl Omega and -i sigma rm.  Tab. 3 has the opposite signs,
     and so does Eq. ODE_conditional_rot, which needs -i Omega Dl Omega for sigma = 1 to be stationary.
     QuTiP sides with Tab. 3.
     """
