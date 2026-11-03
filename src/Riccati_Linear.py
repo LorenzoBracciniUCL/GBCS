@@ -42,31 +42,43 @@ INTERPOLATION_BOUND = np.sqrt(3)/216
 # Singular values below this, relative to ||A||, are round-off in H_J - H_K rather than coupling.
 OBSERVED_TOLERANCE = 1e-13
 
-# X only depends on sigma through Q sigma, but it is computed entry by entry as S_12 @ sigma.  If sigma
-# is large in a direction the coupling does not see and the frame is not aligned with that direction,
-# the exact cancellation is lost to rounding of eps |S_12| |sigma|.  The stored sigma already has
-# absolute precision eps ||sigma|| on its coupled block, so the information is gone from the input:
-# this is detected, not cured.  The aligned case has exact zeros in S_12, so the componentwise
-# product stays at 0 where a norm product would not, and a large sigma that the coupling does see
-# collapses within a step whose S_12 is small, so that stays quiet too.
+# X only depends on sigma through Q sigma, but it is computed entry by entry as S_12 @ sigma, and r_new =
+# y - sigma_new x and -x^T r cancel against sigma the same way.  If sigma has large entries around a
+# thin direction, these cancellations are lost to rounding, and three guards detect it:
 #
-# Each accepted step adds to two running estimates, which do not change when a step is halved:
+# 1. eps max |sigma^-1| |sigma|, on sigma alone.  It is eps for a diagonal sigma however large, and for a hot
+#    isotropic one, and grows as eps s^2 for a state squeezed by s in a tilted frame.  It catches what the
+#    two below cannot: they scale with S_12, and are 0 for a pair that differs only in its force.
+#    It only grows that way when the fat and thin directions share entries.  A beam splitter keeps x and p
+#    apart, so a state squeezed in x and p stays at eps s under it, and there 2. and 3. do the work.
+#    It does not keep growing.  Once the thin eigenvalue is below eps ||sigma|| the stored matrix no longer
+#    holds it, the inverse is capped, and the measure saturates: over random frames, phases and up to 4 modes
+#    it stayed at 0.67 or above for every s >= 1e9.  MAX_SIGMA_CONDITIONING = 0.3 sits under that floor, and
+#    on the rising branch near s = 5e7.  A value above it says nothing about how bad sigma is, and an evolving
+#    sigma cannot jump over the limit, as ||A h|| <= 1/2 bounds its growth per step.
+#
+# 2. and 3. Two running estimates, which do not change when a step is halved:
 #   of the relative error in s and sigma:  e_s = sum eps max |S_12| |sigma|
 #   of the error in r:                     e_r = sum e |sigma| |x| / (1 + |r|), with e the term above.
 # e_r is the larger effect.  X feeds sigma_new = Y X^-1 with eps sigma^2 in a block that is really zero,
-# and r_new = y - sigma_new x picks it up, so r can be wrong by 1 while rho_q is good to 1e-6.
+# and r_new = y - sigma_new x picks it up, so r can be wrong by 1 while rho_q is good to 1e-6.  These two keep
+# working inside limit 1: sigma ~ 1e6 to 1e7 passes it, and a long run accumulates error all the same.
+# The componentwise product stays at 0 on exact zeros in S_12, where a norm product would not, so the
+# aligned case is quiet.  A large sigma that the coupling does see makes these estimates small, because
+# it collapses within a step whose S_12 is small: that is a statement about the estimate.  Whether the result
+# is accurate there is up to limit 1, as a tilted state of that kind can be wrong with both estimates small.
 #
-# Limits, measured on an unstable and a squeezed bystander mode at beam-splitter angles 0.1, 0.6, 1.2:
-# e_r exceeds the true error in r by 9 to 20 around here, so MAX_ROUNDING_ERROR_R keeps it below about
-# 3e-6.  e_s tracks the error in rho_q up to about 1e-6, and falls short by up to 8 beyond it as noise
-# feeds back into sigma, so MAX_ROUNDING_ERROR_S keeps that below about 3e-6.  e_s alone guards r = 0,
-# where x = 0.  Both leave a margin of 2 or more to the mildest cases that must run, sigma ~ 1e6.
+# The limits are measured, not derived.  On the bystander modes they were fitted to, at beam-splitter
+# angles 0.1, 0.6, 1.2, e_r exceeds the true error in r by 9 to 20 near its limit, and e_s tracks the error in
+# rho_q up to about 1e-6 and then falls short by up to 8.  Those ratios hold on that family only: other
+# structures have shown e_s and e_r low by 1e3 or more, which is why limit 1 has to carry the general case.
 #
-# Neither estimate is computed while |sigma| stays below NEGLIGIBLE_SIGMA, where the sum of eps |S_12| |sigma|
-# would need a coupled evolution of order 1e6 ||H_J - H_K||^-1 to reach its limit.  This keeps the
-# bookkeeping to one abs and max per step in the ordinary case.
+# Neither estimate, nor limit 1, is computed while |sigma| stays below NEGLIGIBLE_SIGMA, where eps s^2 ~ 2e-10
+# and the sum of eps |S_12| |sigma| would need a coupled evolution of order 1e6 ||H_J - H_K||^-1 to reach its
+# limit.  This keeps the bookkeeping to one abs and max per step in the ordinary case.
 UNIT_ROUNDOFF = np.finfo(float).eps
 NEGLIGIBLE_SIGMA = 1e3
+MAX_SIGMA_CONDITIONING = 0.3
 MAX_ROUNDING_ERROR_S = 1e-6
 MAX_ROUNDING_ERROR_R = 3e-5
 
@@ -76,8 +88,7 @@ SUBSTEP_ALLOWANCE = 100000
 SUBSTEPS_PER_BASE_STEP = 1000
 
 # Halvings before giving up.  This means X is singular or sigma is too large to resolve, to working
-# precision.  Where the coupling sees the large sigma, sigma ~ 1e18 passes and 1e19 does not; elsewhere
-# the limit is far lower and set by MAX_ROUNDING_ERROR_R, unless the frame is aligned with that direction.
+# precision.  Measured on a diagonal sigma the coupling sees, s ~ 1e18 passes and 1e19 does not.
 # A singular X is a pole of sigma, where ln det X in s diverges too: with r = 0, exp(s) ~ (det X)^(-1/2)
 # grows without bound.
 MAX_HALVINGS = 60
@@ -167,6 +178,7 @@ class Step_Propagators:
         self.norm_A = np.linalg.norm(A)
         self.observed, self.dropped = Observed_Rows(A)
         self.coupled = np.any(A[:self.dim, self.dim:] != 0)
+        self.sensitive = self.coupled or np.any(M[:self.dim, 2*self.dim + 1] != 0)
         self.identity = np.eye(self.dim)
         self.blocks = {}
 
@@ -199,6 +211,23 @@ def Accept_Step(propagators, level, sigma, X):
         return False
     _, S_11_half, S_12_half, *_ = propagators(level + 1)
     return bool(np.linalg.norm(S_11_half + S_12_half @ sigma - propagators.identity) <= MAX_X_DISTANCE)
+
+
+def Sigma_Conditioning(sigma, abs_sigma):
+    """eps max |sigma^-1| |sigma|, which is eps for any diagonal sigma, however large."""
+    try:
+        inverse = np.linalg.inv(sigma)
+    except np.linalg.LinAlgError:
+        return np.inf
+    conditioning = UNIT_ROUNDOFF*(np.abs(inverse) @ abs_sigma).max()
+    return conditioning if np.isfinite(conditioning) else np.inf
+
+
+def Check_Sigma_Conditioning(sigma, abs_sigma):
+    conditioning = Sigma_Conditioning(sigma, abs_sigma)
+    if conditioning > MAX_SIGMA_CONDITIONING:
+        raise np.linalg.LinAlgError(f'sigma is too ill-conditioned in this frame, to working precision: eps max |sigma^-1| '
+                                    f'|sigma| = {conditioning:.1e}.  A frame in which sigma is diagonal avoids this')
 
 
 class Step_Ledger:
@@ -237,11 +266,13 @@ def Advance(propagators, level, sigma, r, rate, ledger):
         return sigma, r, ds_1 + ds_2
 
     rounding = 0.0
-    if propagators.coupled:
+    if propagators.sensitive:
         abs_sigma = np.abs(sigma)
         if abs_sigma.max() > NEGLIGIBLE_SIGMA:
-            rounding = UNIT_ROUNDOFF*(abs_S_12 @ abs_sigma).max()
-            ledger.rounding += rounding
+            Check_Sigma_Conditioning(sigma, abs_sigma)
+            if propagators.coupled:
+                rounding = UNIT_ROUNDOFF*(abs_S_12 @ abs_sigma).max()
+                ledger.rounding += rounding
 
     Y = S_21 + S_22 @ sigma
     sigma_new = np.linalg.solve(X.T, Y.T).T
@@ -376,17 +407,22 @@ def Dynamics_Linear(N_qubits, n_modes, r_0, sigma_0, H_array, r_ham_array, H_q_0
     Gamma_z : (N,) qubit dephasing rates
 
     Returns sigma_JK_t, r_JK_t, C_JK_t, phi_JK_t.
-    Regime: sigma_jk may be very large where the coupling H_J - H_K sees it, up to about 1e18, and on modes
-    the qubits do not touch without limit if the frame is aligned with them, so that H_array has exact zeros
-    there.  In a frame not aligned with such a mode the rounding of S_12 sigma destroys the cancellation that
-    hides it, and sigma of order 1e6 is the limit.  This is detected and raises: it is not a loss of accuracy
-    the solver can avoid, because the input itself no longer holds the coupled block of sigma to working precision.
-    Accuracy of r in the uncoupled direction is the first to go, and is what sets this limit.
+
+    Regimes, as measured on families of test problems and not proved.  The measure is eps max |sigma^-1| |sigma|.
+    Aligned, with sigma diagonal in the modes: the measure stays at eps, and states squeezed up to s ~ 1e18 match
+    their closed forms where the coupling sees them.  On a mode the qubits do not touch, with exact zeros in
+    H_array there, sigma may grow up to overflow.
+    Not aligned: the run raises once the measure passes 0.3, near s ~ 5e7, or earlier if the running estimates of
+    rounding in s and r pass their limits, which first happens for r near s ~ 3e6 on a bystander mode.  What returns
+    was measured at no more than about 1e-4 on rho, r/(1 + |r|) and sigma.
+    Such a raise is a limit of this algorithm in double precision, and not always of the input.  For rho it
+    is close to one: rounding the input alone costs 1e-6 at s = 1e10.  For r it is not: the same stored doubles
+    give r to 1e-7 in higher precision at s = 1e10, where this solver would be wrong by 20.
 
     Raises ValueError for inputs the doubling cannot represent, or non-finite ones: it needs sigma symmetric
     and a^T = -dd, which symmetric H_array entries and an antisymmetric E provide.
     Raises numpy.linalg.LinAlgError, naming the cause and the time, if X_jk becomes singular, sigma_jk, r_jk or s_jk
-    overflow, rounding as above passes its limit, or the substep budget runs out.
+    overflow, the limits above are passed, or the substep budget runs out.
     """
     Check_Inputs(N_qubits, r_0, sigma_0, H_array, r_ham_array, H_q_0_array, rho_q_0, t_array, E, D, d, Gamma_z)
 

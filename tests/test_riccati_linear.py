@@ -7,6 +7,8 @@ Line numbers refer to manuscript/apssamp-3.tex.
 The ODE tolerances are not arbitrary: on a fine grid the ODE solvers saturate at about
 3e-10 in sigma and r, so that is what linear-vs-ODE can resolve.
 """
+import re
+
 import numpy as np
 import pytest
 from scipy.integrate import solve_ivp
@@ -462,6 +464,30 @@ def test_round_off_rows_are_not_taken_for_coupling():
     assert 0 < dropped < Riccati_Linear.OBSERVED_TOLERANCE
 
 
+def test_remainder_counts_the_identity():
+    """No coupling, so Q is empty, but X = exp(a t) still rotates.  At h = 4 pi both samples sit on X = 1
+    and the whole objection comes from the 1 in ||(1, Q sigma)||.
+    """
+    A = Doubling_Matrix(1, np.eye(2), np.eye(2))
+    M = Riccati_Linear.Step_Generator(A, np.zeros(2, dtype=complex), np.zeros(2, dtype=complex))
+    propagators = Riccati_Linear.Step_Propagators(M, 4*np.pi)
+    assert propagators.observed.shape == (0, 2)
+    assert not Riccati_Linear.Accept_Step(propagators, 0, np.eye(2, dtype=complex), propagators(0)[1])
+
+
+def test_dropped_rows_are_counted_in_quadrature():
+    """size = sqrt(dim + ||Q sigma||^2 + (dropped ||sigma||)^2): with the dropped term unsquared this step passes."""
+    H_q = np.diag([0.0, 0.0, 1.0, 1.0])
+    A = Doubling_Matrix(2, np.eye(4) + H_q, np.eye(4) - H_q)
+    M = Riccati_Linear.Step_Generator(A, np.zeros(4, dtype=complex), np.zeros(4, dtype=complex))
+    propagators = Riccati_Linear.Step_Propagators(M, 0.05)
+    sigma = np.diag([1e12, 1e12, 1.0, 1.0]).astype(complex)
+    X = propagators(0)[1] + propagators(0)[2] @ sigma
+    remainder = propagators(0)[9]
+    propagators.dropped = 2*Riccati_Linear.MAX_INTERPOLATION_ERROR/remainder/np.linalg.norm(sigma)
+    assert not Riccati_Linear.Accept_Step(propagators, 0, sigma, X)
+
+
 def test_dropped_rows_are_counted_in_the_remainder():
     """A sigma that Q does not see still counts through the rows dropped from Q."""
     H_q = np.diag([0.0, 0.0, 1.0, 1.0])
@@ -605,7 +631,14 @@ def Rotated_Run(block, sigma_aligned, tau):
     r_0 = np.array([[0.1], [0.2], [0.3], [-0.4]], dtype=complex)
     t = np.linspace(0, tau, 21)
     force, rho_q_0 = np.zeros((4, 1)), np.ones((2, 2))
-    _, r_true, C_true, phi_true = Dynamics_Linear(1, 2, r_0, sigma_aligned, [H_m_aligned, H_q_aligned], [force, force], np.zeros(1), rho_q_0, t)
+    # The reference: aligned, with mode 1 decoupled exactly.  A rotating squeezed mode 1 is tilted in any
+    # frame, so the guard on sigma would stop it, though nothing here can go wrong in this aligned frame
+    limit = Riccati_Linear.MAX_SIGMA_CONDITIONING
+    Riccati_Linear.MAX_SIGMA_CONDITIONING = np.inf
+    try:
+        _, r_true, C_true, phi_true = Dynamics_Linear(1, 2, r_0, sigma_aligned, [H_m_aligned, H_q_aligned], [force, force], np.zeros(1), rho_q_0, t)
+    finally:
+        Riccati_Linear.MAX_SIGMA_CONDITIONING = limit
     _, r, C, phi = Dynamics_Linear(1, 2, R @ r_0, R @ sigma_aligned @ R.T, [H_m, H_q], [force, force], np.zeros(1), rho_q_0, t)
     rho_error = np.max(np.abs(np.exp(-(C - C_true)[:, 1, 0] + 1j*(phi - phi_true)[:, 1, 0]) - 1))
     difference = np.abs(np.einsum('ab,tb->ta', R.T, r[:, 1, 0, :, 0]) - r_true[:, 1, 0, :, 0])
@@ -620,23 +653,28 @@ def Squeezed_Run(s):
     return Rotated_Run(np.eye(2), np.diag([s, 1/s, 1.0, 1.0]).astype(complex), 10.0)
 
 
+TOO_ILL_CONDITIONED = 'does not resolve, to working precision|too ill-conditioned in this frame'
+
+
 @pytest.mark.parametrize('run, value', [(Unstable_Run, 6.0), (Unstable_Run, 8.0), (Unstable_Run, 10.0),
                                         (Squeezed_Run, 1e4), (Squeezed_Run, 1e5), (Squeezed_Run, 1e6)])
 def test_rotated_frame_answers_within_its_regime(run, value):
-    """Guards against a limit set too tight.  bde56b2 passes this: it was right here."""
+    """Guards against a limit set too tight.  Older commits pass this: they were right here."""
     rho_error, r_error = run(value)
     assert rho_error < 1e-8
     assert r_error < 1e-6
 
 
 @pytest.mark.parametrize('run, value', [(Unstable_Run, 11.0), (Unstable_Run, 12.0), (Unstable_Run, 13.0), (Unstable_Run, 14.0),
-                                        (Squeezed_Run, 1e7), (Squeezed_Run, 1e8), (Squeezed_Run, 1e9), (Squeezed_Run, 1e10)])
+                                        (Squeezed_Run, 7e6), (Squeezed_Run, 1e7), (Squeezed_Run, 1e8), (Squeezed_Run, 1e9), (Squeezed_Run, 1e10)])
 def test_rotated_frame_is_right_or_raises(run, value):
-    """Never silently wrong.  bde56b2 returns r wrong by up to 21 here with no error, and rho_q by 2e-4."""
+    """Never silently wrong.  bde56b2 returns r wrong by up to 21 here with no error, and rho_q by 2e-4.
+    s = 7e6 sits just past the limit on e_r: 10 times looser and r comes back wrong by 2.7e-5.
+    """
     try:
         rho_error, r_error = run(value)
     except np.linalg.LinAlgError as error:
-        assert 'does not resolve' in str(error)
+        assert re.search(TOO_ILL_CONDITIONED, str(error))
         return
     assert rho_error < 1e-5
     assert r_error < 1e-5
@@ -646,23 +684,132 @@ def test_rotated_frame_is_right_or_raises(run, value):
                                         (Squeezed_Run, 1e10), (Squeezed_Run, 1e12), (Squeezed_Run, 1e14)])
 def test_rotated_frame_raises_and_names_the_cause(run, value):
     """bde56b2 returned 1.0 on rho_q after 146 s at T = 16, and did not finish at T = 20."""
-    with pytest.raises(np.linalg.LinAlgError, match='does not resolve, to working precision'):
+    with pytest.raises(np.linalg.LinAlgError, match=TOO_ILL_CONDITIONED):
         run(value)
 
 
+def Tilted(s, tilt=np.pi/4):
+    """sigma squeezed by s along a tilted axis, its thin direction, and the frame."""
+    c, n = np.cos(tilt), np.sin(tilt)
+    Q = np.array([[c, n], [-n, c]])
+    sigma = Q @ np.diag([s, 1/s]) @ Q.T
+    return 0.5*(sigma + sigma.T).astype(complex), (Q @ np.array([0.0, 1.0])).reshape(2, 1), Q
+
+
+def Tilted_Run(s, H_m, H_q, force, tau):
+    sigma, thin, _ = Tilted(s)
+    return Dynamics_Linear(1, 1, (0.2*thin).astype(complex), sigma, [H_m*np.eye(2), H_q*np.eye(2)], [ZERO_FORCE, force*thin],
+                           np.zeros(1), np.ones((2, 2)), np.array([0, tau]))
+
+
+@pytest.mark.parametrize('s', [1e10, 1e12, 1e14, 1e16, 1e18])
+@pytest.mark.parametrize('H_m, H_q, force, tau', [(0.0, 0.0, 0.3, 3.0), (0.0, 1e-3, 0.3, 3.0), (1.0, 0.3, 0.0, 1.0)],
+                         ids=['force-only', 'weak-coupling', 'no-force'])
+def test_tilted_state_raises(s, H_m, H_q, force, tau):
+    """e_s and e_r scale with S_12, but r = y - sigma x and -x^T r cancel against sigma regardless.  3cf159d
+    returned these with no error, rho_q wrong by 0.21 in the force-only row and sigma by 0.23 in the last.
+    s = 1e14 in the last row is also what a limit 10 times looser would let through, wrong by 1.5e-4.
+    """
+    with pytest.raises(np.linalg.LinAlgError, match='too ill-conditioned in this frame'):
+        Tilted_Run(s, H_m, H_q, force, tau)
+
+
+def test_force_only_pair_is_guarded():
+    """The case from review: S_12 = 0 exactly, so e_s = e_r = 0, and |rho| ~ 1 hides nothing."""
+    sigma, thin, _ = Tilted(1e16)
+    with pytest.raises(np.linalg.LinAlgError, match='too ill-conditioned in this frame'):
+        Dynamics_Linear(1, 1, (0.2*thin).astype(complex), sigma, [np.zeros((2, 2)), np.zeros((2, 2))], [ZERO_FORCE, 0.3*thin],
+                        np.zeros(1), np.ones((2, 2)), np.array([0, 3.0]))
+
+
+def test_branch_with_nothing_to_cancel_is_left_alone():
+    """No coupling and no force: X = S_11 and x = 0, so a tilted sigma is only rotated and stays exact."""
+    sigma, thin, _ = Tilted(1e12)
+    result, _, C, phi = Dynamics_Linear(1, 1, (0.2*thin).astype(complex), sigma, [np.eye(2), np.zeros((2, 2))], [ZERO_FORCE, ZERO_FORCE],
+                                        np.zeros(1), np.ones((2, 2)), np.array([0, 2*np.pi]))
+    assert np.max(np.abs(result[-1, 1, 0]/np.max(np.abs(sigma)) - sigma/np.max(np.abs(sigma)))) < 1e-12
+    assert np.max(np.abs(C)) + np.max(np.abs(phi)) < 1e-12
+
+
+@pytest.mark.parametrize('s', [1e4, 1e6, 1e7])
+def test_tilted_state_answers_below_the_limit(s):
+    """H proportional to 1 is the same in the tilted frame, which gives the same physics with sigma diagonal."""
+    sigma, thin, Q = Tilted(s)
+    H_array = [np.eye(2), 0.3*np.eye(2)]
+    r_0 = (0.2*thin).astype(complex)
+    force = 0.1*thin
+    t = np.array([0, 1.0])
+    rho_q_0 = np.ones((2, 2))
+    answer = Dynamics_Linear(1, 1, r_0, sigma, H_array, [ZERO_FORCE, force], np.zeros(1), rho_q_0, t)
+    exact = Dynamics_Linear(1, 1, Q.T @ r_0, Q.T @ sigma @ Q, H_array, [ZERO_FORCE, Q.T @ force], np.zeros(1), rho_q_0, t)
+    assert abs(answer[2][-1, 1, 0] - exact[2][-1, 1, 0]) + abs(answer[3][-1, 1, 0] - exact[3][-1, 1, 0]) < 1e-7
+    assert np.max(np.abs(Q.T @ answer[1][-1, 1, 0] - exact[1][-1, 1, 0])) < 1e-7
+    assert np.max(np.abs(Q.T @ answer[0][-1, 1, 0] @ Q - exact[0][-1, 1, 0]))/np.max(np.abs(sigma)) < 1e-7
+
+
+@pytest.mark.parametrize('n_modes', [1, 2, 4])
+def test_conditioning_measure_saturates_above_its_limit(n_modes):
+    """Past s ~ 1e8 the inverse is capped by what the stored matrix can hold, so the measure stops growing,
+    near 1 at worst.  MAX_SIGMA_CONDITIONING has to stay under that floor for a large s to raise at all.
+    """
+    rng = np.random.default_rng(n_modes)
+    dim = 2*n_modes
+    for s in (1e9, 1e12, 1e16):
+        for _ in range(300):
+            Q = np.linalg.qr(rng.normal(size=(dim, dim)))[0]
+            eigenvalues = np.ones(dim)
+            eigenvalues[:2] = s, 1/s
+            sigma = Q @ np.diag(eigenvalues) @ Q.T
+            sigma = (0.5*(sigma + sigma.T)).astype(complex)
+            assert Riccati_Linear.Sigma_Conditioning(sigma, np.abs(sigma)) > Riccati_Linear.MAX_SIGMA_CONDITIONING
+
+
+def test_conditioning_measure_is_quiet_where_it_should_be():
+    measure = Riccati_Linear.Sigma_Conditioning
+    for sigma in (np.diag([1e18, 1e-18]), 2e8*np.eye(2), np.diag([1e8, 4e8])):
+        sigma = sigma.astype(complex)
+        assert measure(sigma, np.abs(sigma)) < 1e-15
+    assert measure(np.ones((2, 2), dtype=complex), np.ones((2, 2))) == np.inf
+
+
+def test_hot_mode_must_run():
+    """Hot and isotropic, nbar = 1e8: large entries with nothing thin."""
+    sigma = (1 + 2e8)*np.eye(2, dtype=complex)
+    result = Dynamics_Linear(1, 1, np.array([[0.3], [0.2]], dtype=complex), sigma, [np.eye(2), 0.3*np.eye(2)], [ZERO_FORCE, ZERO_FORCE],
+                             np.zeros(1), np.ones((2, 2)), np.linspace(0, 10, 21))
+    assert np.all(np.isfinite(result[2]))
+
+
+def test_forty_decibels_at_long_times_must_run():
+    """s = 1e4 rotates through every tilt and returns, thousands of times."""
+    s = 1e4
+    tau = 1e4
+    _, r, C, phi = Dynamics_Linear(1, 1, np.array([[0.3], [0.2]], dtype=complex), np.diag([s, 1/s]).astype(complex), [np.eye(2), 0.3*np.eye(2)],
+                                   [ZERO_FORCE, ZERO_FORCE], np.zeros(1), np.ones((2, 2)), np.linspace(0, tau, 11))
+    assert np.all(np.isfinite(C)) and np.all(np.isfinite(phi)) and np.all(np.isfinite(r))
+
+
 def test_rounding_limit_guards_zero_r_too():
-    """With r = 0, x = 0 and only the estimate on s can fire, so the limit on it must be enough alone."""
-    H_m, H_q, R = Rotated_Problem(SIGMA_X)
+    """With r = 0, x = 0, so e_r stays 0, and a beam splitter keeps x and p apart, so the guard on the
+    conditioning of sigma only sees eps s.  That leaves e_s to stop the error adding up over a run:
+    3.7e-7 at T = 10, past its limit by T = 100.  A limit 10 times looser would not raise.
+    """
+    H_m, H_q, R = Rotated_Problem(np.zeros((2, 2)))
     force = np.zeros((4, 1))
-    arguments = (np.zeros((4, 1), dtype=complex), np.eye(4, dtype=complex), [H_m, H_q], [force, force], np.zeros(1), np.ones((2, 2)))
-    Dynamics_Linear(1, 2, *arguments, np.linspace(0, 12, 21))
+    sigma = (R @ np.diag([1e9, 1e-9, 1.0, 1.0]) @ R.T).astype(complex)
+    arguments = (np.zeros((4, 1), dtype=complex), 0.5*(sigma + sigma.T), [H_m, H_q], [force, force], np.zeros(1), np.ones((2, 2)))
+    Dynamics_Linear(1, 2, *arguments, np.linspace(0, 10, 21))
     with pytest.raises(np.linalg.LinAlgError, match='does not resolve'):
-        Dynamics_Linear(1, 2, *arguments, np.linspace(0, 14, 21))
+        Dynamics_Linear(1, 2, *arguments, np.linspace(0, 100, 21))
 
 
-def test_rounding_limits_are_pinned():
+def test_limits_are_pinned():
     assert Riccati_Linear.MAX_ROUNDING_ERROR_S == 1e-6
     assert Riccati_Linear.MAX_ROUNDING_ERROR_R == 3e-5
+    assert Riccati_Linear.MAX_SIGMA_CONDITIONING == 0.3
+    assert Riccati_Linear.NEGLIGIBLE_SIGMA == 1e3
+    assert Riccati_Linear.SUBSTEP_ALLOWANCE == 100000
+    assert Riccati_Linear.SUBSTEPS_PER_BASE_STEP == 1000
 
 
 def test_rounding_estimate_does_not_depend_on_the_grid():
