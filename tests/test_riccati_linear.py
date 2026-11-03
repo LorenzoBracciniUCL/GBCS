@@ -772,6 +772,17 @@ def test_conditioning_measure_is_quiet_where_it_should_be():
     assert measure(np.ones((2, 2), dtype=complex), np.ones((2, 2))) == np.inf
 
 
+@pytest.mark.filterwarnings('ignore::RuntimeWarning')
+def test_non_finite_measure_raises_at_the_guard():
+    """A subnormal pivot inverts to inf with no error from inv, and inf 0 then gives nan in the product.
+    A measure that is not finite has to count as the worst case.
+    """
+    sigma = np.diag([1e-310, 1.0]).astype(complex)
+    assert Riccati_Linear.Sigma_Conditioning(sigma, np.abs(sigma)) == np.inf
+    with pytest.raises(np.linalg.LinAlgError, match='too ill-conditioned'):
+        Riccati_Linear.Check_Sigma_Conditioning(sigma, np.abs(sigma))
+
+
 def test_hot_mode_must_run():
     """Hot and isotropic, nbar = 1e8: large entries with nothing thin."""
     sigma = (1 + 2e8)*np.eye(2, dtype=complex)

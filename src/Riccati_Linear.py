@@ -52,10 +52,12 @@ OBSERVED_TOLERANCE = 1e-13
 #    It only grows that way when the fat and thin directions share entries.  A beam splitter keeps x and p
 #    apart, so a state squeezed in x and p stays at eps s under it, and there 2. and 3. do the work.
 #    It does not keep growing.  Once the thin eigenvalue is below eps ||sigma|| the stored matrix no longer
-#    holds it, the inverse is capped, and the measure saturates: over random frames, phases and up to 4 modes
-#    it stayed at 0.67 or above for every s >= 1e9.  MAX_SIGMA_CONDITIONING = 0.3 sits under that floor, and
-#    on the rising branch near s = 5e7.  A value above it says nothing about how bad sigma is, and an evolving
-#    sigma cannot jump over the limit, as ||A h|| <= 1/2 bounds its growth per step.
+#    holds it, the inverse is capped, and the measure saturates, empirically at about 0.5 or above for every
+#    s >= 1e9: 0.67 over real orthogonal frames and phases up to 4 modes, about 0.5 over symplectic and complex
+#    orthogonal ones.  MAX_SIGMA_CONDITIONING = 0.3 sits under that floor, with a margin of about 1.7, and on
+#    the rising branch near s = 5e7.  A value above it says nothing about how bad sigma is, and an evolving
+#    sigma cannot jump over the limit, as ||A h|| <= 1/2 bounds its growth per step.  The sigma returned by
+#    the last step is not checked: measures up to 0.5 have been seen there, with small errors.
 #
 # 2. and 3. Two running estimates, which do not change when a step is halved:
 #   of the relative error in s and sigma:  e_s = sum eps max |S_12| |sigma|
