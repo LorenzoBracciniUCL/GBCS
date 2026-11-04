@@ -3,9 +3,9 @@ import math as math
 import cmath as cmath
 from scipy import linalg as linalg
 
-import QIT_Functions as QIT_Functions
+from . import QIT_Functions
 
-import Gaussian as Gaussian
+from . import Gaussian
 
 
 

@@ -4,9 +4,9 @@ import cmath as cmath
 from scipy import linalg as linalg
 from scipy.integrate import quad, quad_vec
 
-import QIT_Functions as QIT_Functions
+from . import QIT_Functions
 
-import Gaussian as Gaussian
+from . import Gaussian
 
 
 

@@ -5,7 +5,6 @@ import math as math
 import cmath as cmath
 from scipy import linalg as linalg
 from scipy import integrate as integ
-from numba import jit
 from matplotlib import cm
 from matplotlib import rcParams
 from matplotlib import colors

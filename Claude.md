@@ -4,7 +4,9 @@ This is a Python library for **Gaussian-Branched Cat States** (`N` qubits × `n`
 
 For a deep dive, read `docs/ARCHITECTURE.md` (paper-to-code map) and `docs/BUGS.md` (known issues). The brief below is the load-bearing context only.
 
-## Source tree (`src/`)
+## Source tree (`src/gbcs/`)
+
+Installable package: `pip install -e .` from the repo root, then `from gbcs import Quantum_State, Hamiltonian, ...` or `from gbcs import Gaussian`. Modules import each other relatively (`from . import Gaussian`). Supports numpy 1.26 and 2.x.
 
 - `Gaussian.py` — `Omega_N`, `U_N`, `S_m = exp(ΩHτ)`, no-qubit ODEs, `Get_Decoherence_Rates(B) → (E, D)`.
 - `QIT_Functions.py` — `Extract_Qubit_Labels_Array(N, j)` returns `J ∈ {±1}^N` (map `2·bit − 1`).
@@ -14,7 +16,7 @@ For a deep dive, read `docs/ARCHITECTURE.md` (paper-to-code map) and `docs/BUGS.
 - `Open_Operator_Force.py` — only `Dynamics_Symetric_Numerical` (E=0) is reliable; `Dynamics_General_Numerical` calls undefined functions.
 - `Open_Operator_Gaussian.py` — General + Lindblad, Tab. 3. Missing Ω·d driving and Γ_z dephasing terms.
 - `Riccati_Linear.py` — General case, unitary and open, constant H: linear doubling map for σ, r, s in place of the nested ODEs. `solver='linear'` in `Objects`.
-- `*_Time_Depentent.py` (sic — typo in filename) — sign-flipped vs constant versions; "Open" variant lacks E/D entirely.
+- `*_Time_Dependent.py` — sign-flipped vs constant versions; "Open" variant lacks E/D entirely.
 - `Measurements.py` — projective qubit measurements, generaldyne/homodyne (Eq. 51), PPT log-negativity (hardcoded N=2).
 - `Wigner_Functions.py` — Wigner functions: diagonal, PMS, Gaussian.
 - `Plots_Functions.py` — matplotlib: 2-D Wigner, 3-D vectors/ellipsoids, animations. 3-D plotting hardcodes 2-qubit (`_INDEX_MAP_3D`).
@@ -35,7 +37,7 @@ For a deep dive, read `docs/ARCHITECTURE.md` (paper-to-code map) and `docs/BUGS.
 
 | `.type[1]` | Routes to | When |
 |---|---|---|
-| `'Gaussian'` | `src/Gaussian.py` | No qubit coupling at all — `len(H_array) == 1`, `len(r_array) == 1`. |
+| `'Gaussian'` | `src/gbcs/Gaussian.py` | No qubit coupling at all — `len(H_array) == 1`, `len(r_array) == 1`. |
 | `'Force'` | `Unitary_Operator_Force.py` / `Open_Operator_Force.py` | `len(H_array) == 1` but `len(r_array) > 1`. |
 | `'General'` | `Unitary_Operator_Gaussian.py` / `Open_Operator_Gaussian.py` | `len(H_array) > 1`. |
 

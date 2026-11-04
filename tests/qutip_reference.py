@@ -20,7 +20,7 @@ import numpy as np
 import qutip
 from scipy import linalg
 
-import QIT_Functions
+from gbcs import QIT_Functions
 
 
 def Mode_Operators(n_modes, cutoff):

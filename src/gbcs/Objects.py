@@ -10,21 +10,21 @@ from matplotlib import rcParams
 from matplotlib import colors
 
 
-import Gaussian as Gaussian
-import Unitary_Operator_Force as Unitary_Operator_Force
-import Unitary_Operator_Gaussian as Unitary_Operator_Gaussian
-import Unitary_Operator_Time_Depentent as Unitary_Operator_Time_Depentent
+from . import Gaussian
+from . import Unitary_Operator_Force
+from . import Unitary_Operator_Gaussian
+from . import Unitary_Operator_Time_Dependent
 
-import Open_Operator_Force as Open_Operator_Force
-import Open_Operator_Gaussian as Open_Operator_Gaussian
-import Open_Operator_Time_Depentent as Open_Operator_Time_Depentent
+from . import Open_Operator_Force
+from . import Open_Operator_Gaussian
+from . import Open_Operator_Time_Dependent
 
-import Riccati_Linear as Riccati_Linear
-import Symplectic_Known as Symplectic_Known
-import Measurements as Measurements
-import Plots_Functions as Plots_Functions
-import Wigner_Functions as Wigner_Functions
-import Operations as Operations
+from . import Riccati_Linear
+from . import Symplectic_Known
+from . import Measurements
+from . import Plots_Functions
+from . import Wigner_Functions
+from . import Operations
 
 
 class Hamiltonian:
@@ -281,7 +281,7 @@ class Quantum_State:
                     self.n_modes, self.r_0, self.sigma_0,
                     Hamiltonian.H_array_func[0], Hamiltonian.r_array_func[0], t_array)
             else:
-                self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Unitary_Operator_Time_Depentent.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
+                self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Unitary_Operator_Time_Dependent.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
                                                                                                                 Hamiltonian.r_array_func, Hamiltonian.H_q_0_array_func, self.rho_q_0, self.t_array)
                 self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
                 self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
@@ -326,7 +326,7 @@ class Quantum_State:
                 self.type = 'GCS'
 
         elif Symplectic.type == 'Time':
-            self.sigma_JK_t, self.r_JK_t, self.r_JK_0_t = Unitary_Operator_Time_Depentent.Dynamics_Analytical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
+            self.sigma_JK_t, self.r_JK_t, self.r_JK_0_t = Unitary_Operator_Time_Dependent.Dynamics_Analytical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
                                                                                                                Hamiltonian.r_array_func, Hamiltonian.H_q_0_array_func, self.rho_q_0, self.t_array)
             self.type = 'GCS'
 
@@ -397,7 +397,7 @@ class Quantum_State:
                     self.n_modes, self.r_0, self.sigma_0,
                     Hamiltonian.H_array_func[0], Hamiltonian.r_array_func[0], E, D, t_array)
             else:
-                self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Open_Operator_Time_Depentent.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
+                self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Open_Operator_Time_Dependent.Dynamics_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
                                                                                                                 Hamiltonian.r_array_func, Hamiltonian.H_q_0_array_func, self.rho_q_0, E, D, self.t_array)
                 self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
                 self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
@@ -444,7 +444,7 @@ class Quantum_State:
                 self.type = 'GCS'
 
         elif Symplectic.type == 'Time':
-            self.sigma_JK_t, self.r_JK_t, self.r_JK_0_t = Unitary_Operator_Time_Depentent.Unitary_Gaussian_General_Time_Dep_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
+            self.sigma_JK_t, self.r_JK_t, self.r_JK_0_t = Unitary_Operator_Time_Dependent.Unitary_Gaussian_General_Time_Dep_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0, Hamiltonian.H_array_func,
                                                                                                                Hamiltonian.r_array_func, Hamiltonian.H_q_0_array_func, self.rho_q_0, self.t_array)
             self.rho_q_t = np.exp(self.r_JK_0_t)
             self.type = 'GCS'

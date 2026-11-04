@@ -13,10 +13,11 @@ These guard the four fixes to Open_Operator_Force / Unitary_Operator_Force.  Bef
 import numpy as np
 import pytest
 
-from Objects import Quantum_State, Hamiltonian, Decoherence
+from gbcs.Objects import Quantum_State, Hamiltonian, Decoherence
 
 F_U, F_Q, N_P, S, GAMMA_X = 0.5, 2.0, 0.8, 2.0, 0.1
-TOL = 1e-12
+# r^off reaches 1.8e-12 with scipy 1.17: the ODE round-off differs between scipy versions.
+TOL = 1e-11
 
 
 def _state(gamma_x, t_array):

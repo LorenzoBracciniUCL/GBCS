@@ -1,5 +1,5 @@
 import numpy as np
-import Gaussian as Gaussian
+from . import Gaussian
 
 
 def Conditional_Displacement(N_qubits, n_modes, sigma_JK, r_JK, r_array):

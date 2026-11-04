@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
-import Plots_Functions as PF
+from gbcs import Plots_Functions as PF
 
 
 # ── Task 1: the contour must grow with the noise ─────────────────────────────

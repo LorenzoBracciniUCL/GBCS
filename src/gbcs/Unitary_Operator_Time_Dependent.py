@@ -7,8 +7,8 @@ from scipy import integrate as integ
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 
-import QIT_Functions as QIT_Functions
-import Gaussian as Gaussian
+from . import QIT_Functions
+from . import Gaussian
 
 def Compute_r_J_func(J_labels,  r_array_func):
     """
@@ -55,11 +55,12 @@ def equation_dot_sigma_jk_Time_Dep(t, y, H_J_func, H_K_func, n_modes):
     """
     Omega = Gaussian.Omega_N(n_modes) 
     sigma_jk = y.reshape((2*n_modes, 2*n_modes))  # Reshape to 2n x 2n matrix
+    
     H_J = H_J_func(t)
     H_K = H_K_func(t)
     
     # Compute derivative
-    sigma_jk_dot = 0.5 * (sigma_jk @ (H_J + H_K) @ Omega - Omega @ (H_J + H_K) @ sigma_jk) - 1j * (sigma_jk @ (H_J - H_K) @ sigma_jk + Omega @ (H_J - H_K) @ Omega)
+    sigma_jk_dot = 0.5 * (Omega @ (H_J + H_K) @ sigma_jk - sigma_jk @ (H_J + H_K) @ Omega) - 1j * (sigma_jk @ (H_J - H_K) @ sigma_jk + Omega @ (H_J - H_K) @ Omega)
     
     return - sigma_jk_dot.flatten()
 
@@ -85,14 +86,14 @@ def equation_dot_r_jk_Time_Dep(t, y, sigma_jk_interp, H_J_func, H_K_func, r_J_fu
     Omega = Gaussian.Omega_N(n_modes) 
     r_jk = y.reshape((2*n_modes, 1))  # Reshape to 2n x 1 vector
     sigma_jk = sigma_jk_interp(t).reshape(2*n_modes, 2*n_modes)  # Properly reshape interpolated sigma_jk
+    
     H_j = H_J_func(t)
     H_k = H_K_func(t)
     r_j = r_J_func(t)
     r_k = r_K_func(t)
 
-  
     # Compute derivative
-    r_jk_dot = -0.5 * Omega @ (H_j + H_k) @ r_jk + 0.5j * sigma_jk @ (H_j - H_k) @ r_jk + 0.5 * Omega @ (r_j + r_k) + 0.5j * sigma_jk @ (r_j - r_k)
+    r_jk_dot = 0.5 * Omega @ (H_j + H_k) @ r_jk - 0.5j * sigma_jk @ (H_j - H_k) @ r_jk - 0.5 * Omega @ (r_j + r_k) + 0.5j * sigma_jk @ (r_j - r_k)
     
     return - r_jk_dot.flatten()
     
@@ -127,11 +128,10 @@ def equation_dot_r_jk_0_Time_Dep(t, y, sigma_JK_interp,r_JK_interp, H_J_func, H_
         H_q_0_array[i] = H_q_0_array_func[i](t)
 
     # Compute derivative
-    r_0_jk_dot = (0.5 * r_jk.T @ (H_j - H_k) @ r_jk - (r_j - r_k).T @ r_jk
-                   + 0.5 * np.trace((H_j - H_k) @ sigma_jk) + 0.5 * np.transpose(J_labels- K_labels)@H_q_0_array)
+    r_0_jk_dot = - 1j * 0.5 * r_jk.T @ (H_j - H_k) @ r_jk + 1j *(r_j - r_k).T @ r_jk - 0.25* 1j * np.trace((H_j - H_k) @ sigma_jk) - 0.5 * 1j* np.transpose(J_labels- K_labels)@H_q_0_array
 
     
-    return - (-1j * r_0_jk_dot).flatten()
+    return   r_0_jk_dot.flatten()
 
 
 def Compute_R_JK_0_Unitary_Gaussian_General_Numerical_Time_Dep(n_modes, r_JK_sol, sigma_JK_sol,  H_J_func, H_K_func, r_J_func, r_K_func, J_labels, K_labels, H_q_0_array_func, rho_q_0_JK, t_array):
@@ -152,7 +152,7 @@ def Compute_R_JK_0_Unitary_Gaussian_General_Numerical_Time_Dep(n_modes, r_JK_sol
       
     return r_0_jk_sol[:,0]
 
-def Unitary_Gaussian_General_Time_Dep_Numerical(N_qubits, n_modes, r_0, sigma_0, H_array_func, r_array_func, H_q_0_array_func, rho_q_0, t_array):
+def Dynamics_Numerical(N_qubits, n_modes, r_0, sigma_0, H_array_func, r_array_func, H_q_0_array_func, rho_q_0, t_array):
     
     sigma_JK_t = np.zeros((len(t_array), 2**N_qubits, 2**N_qubits, 2*n_modes, 2*n_modes),dtype =np.complex64)
     r_JK_t = np.zeros((len(t_array), 2**N_qubits, 2**N_qubits, 2*n_modes, 1 ), dtype =np.complex64)

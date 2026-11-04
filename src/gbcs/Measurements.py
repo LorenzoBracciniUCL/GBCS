@@ -7,7 +7,7 @@ from scipy import integrate as integ
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 
-import QIT_Functions as QIT_Functions 
+from . import QIT_Functions
 
 
 ########################################## Expectation Values ##########################################

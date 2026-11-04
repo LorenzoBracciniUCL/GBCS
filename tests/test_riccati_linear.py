@@ -14,12 +14,12 @@ import pytest
 from scipy.integrate import solve_ivp
 from scipy.linalg import expm
 
-import Gaussian
-import Open_Operator_Gaussian
-import Riccati_Linear
-import Unitary_Operator_Gaussian
-from Objects import Decoherence, Hamiltonian, Quantum_State
-from Riccati_Linear import Doubling_Matrix, Dynamics_Linear
+from gbcs import Gaussian
+from gbcs import Open_Operator_Gaussian
+from gbcs import Riccati_Linear
+from gbcs import Unitary_Operator_Gaussian
+from gbcs.Objects import Decoherence, Hamiltonian, Quantum_State
+from gbcs.Riccati_Linear import Doubling_Matrix, Dynamics_Linear
 
 SIGMA_X = np.array([[0., 1.], [1., 0.]])
 ZERO_FORCE = np.zeros((2, 1))

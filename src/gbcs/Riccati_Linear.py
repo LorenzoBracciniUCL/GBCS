@@ -18,9 +18,9 @@ and f2 = 1/2 Omega (2d - r_j - r_k).  All transposes are unconjugated.
 import numpy as np
 from scipy import linalg as linalg
 
-import Gaussian as Gaussian
-import QIT_Functions as QIT_Functions
-from Open_Operator_Gaussian import Compute_H_J, Compute_r_J
+from . import Gaussian
+from . import QIT_Functions
+from .Open_Operator_Gaussian import Compute_H_J, Compute_r_J
 
 # ln det X is summed from the principal logs of the eigenvalues of X, which gives the continuous
 # value, and so the right sign of the QRDM element, only if X(t) stays on one branch of the log for

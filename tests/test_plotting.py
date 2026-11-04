@@ -5,7 +5,7 @@ matplotlib.use('Agg')
 import numpy as np
 import pytest
 
-import Plots_Functions as PF
+from gbcs import Plots_Functions as PF
 
 X = np.linspace(-4, 4, 21)
 P = np.linspace(-4, 4, 21)
@@ -77,7 +77,7 @@ def test_quantum_state_weighted_method():
     """Plot_Wigner_Function_GCS_Weighted is public API that no notebook calls (the
     notebook already holds W_c and W_q and would pay for them twice), so it is exercised
     here instead of being left untested."""
-    from Objects import Quantum_State, Hamiltonian, Decoherence
+    from gbcs.Objects import Quantum_State, Hamiltonian, Decoherence
 
     H = Hamiltonian(1, 1)
     H.Initialize_Constant_Hamiltonians(
@@ -95,3 +95,28 @@ def test_quantum_state_weighted_method():
         W_g=lambda x, p: np.zeros_like(x), p_c=1.0, p_q=1.0, p_g=0.0)
     assert W_sum.shape == (9, 9)
     assert np.all(np.isfinite(W_sum))
+
+
+def test_post_measurement_wigner_takes_the_scalar_of_each_gaussian():
+    """Wigner_PMS_func stored the 1x1 exponent array into a scalar slot, which numpy 2
+    rejects ('only 0-dimensional arrays can be converted') and numpy 1.25+ deprecates."""
+    import warnings
+    from gbcs import Wigner_Functions
+    from gbcs.Objects import Quantum_State, Hamiltonian
+
+    H = Hamiltonian(1, 1)
+    H.Initialize_Constant_Hamiltonians(
+        [np.eye(2)], [np.array([[0.5], [0.]]), np.array([[2.0], [0.]])],
+        np.array([0.0 + 0j]))
+    G = Quantum_State(1, 1)
+    G.Initialize_Gaussian_State(np.zeros((2, 1)), np.eye(2), np.ones((2, 2))/2)
+    G.Unitary_Dynamics_Numerical(H, np.linspace(0, np.pi, 5))
+    G.Qubit_Ideal_Measurament(np.array([[0, 1], [1, 0]])/2, 'Time')
+
+    r_tilde_array, *_ = Wigner_Functions.Create_r_tilde_array(G, 1.0, 0, 9)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', DeprecationWarning)
+        W = Wigner_Functions.Wigner_PMS_func(G, 2, r_tilde_array)
+    assert W.shape == (len(G.POVM_array), 9, 9)
+    assert np.all(np.isfinite(W))
+    assert np.max(np.abs(W)) > 0

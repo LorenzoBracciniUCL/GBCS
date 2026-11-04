@@ -10,7 +10,7 @@ from scipy.interpolate import interp1d
 
 from scipy.integrate import quad, quad_vec
 
-import QIT_Functions as QIT_Functions
+from . import QIT_Functions
 
 # Solver settings shared by every phase-space ODE in this library.  scipy's default
 # (RK45, rtol=1e-3, atol=1e-6) leaves errors of order 1e-3 in sigma, which is far larger

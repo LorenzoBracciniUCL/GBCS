@@ -8,8 +8,8 @@ larger than most of the quantities these solutions are used to check.
 import numpy as np
 import pytest
 
-import Gaussian
-from Objects import Quantum_State, Hamiltonian, Decoherence
+from gbcs import Gaussian
+from gbcs.Objects import Quantum_State, Hamiltonian, Decoherence
 
 F_U, F_Q, N_P, S, GAMMA_X = 0.5, 2.0, 0.8, 0.5, 0.05
 
@@ -23,7 +23,7 @@ def test_every_solve_ivp_uses_them():
     """A new call site that forgets the settings silently reintroduces rtol=1e-3."""
     import os
     import re
-    src = os.path.join(os.path.dirname(__file__), '..', 'src')
+    src = os.path.join(os.path.dirname(__file__), '..', 'src', 'gbcs')
     missing = []
     for fn in os.listdir(src):
         if not fn.endswith('.py'):

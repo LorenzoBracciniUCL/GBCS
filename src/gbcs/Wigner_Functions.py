@@ -7,8 +7,8 @@ from scipy import integrate as integ
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 
-import QIT_Functions as QIT_Functions
-import Gaussian as Gaussian
+from . import QIT_Functions
+from . import Gaussian
 
 def Create_XX_PP(GCS, sigma_para, steps):
 
@@ -71,7 +71,7 @@ def Wigner_PMS_func(GCS, time_index, r_tilde_array):
             for m in range(len(r_tilde_array)):
                 for n in range(len(r_tilde_array)):
                     for a in range(len(W_PMS)):
-                        W_PMS[a,m,n] += GCS.POVM_array[a,i,j]*(2**n_modes)*rho_q[i,j]/(np.pi**n_modes * np.sqrt(det_sigma))*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,j])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,j]))
+                        W_PMS[a,m,n] += GCS.POVM_array[a,i,j]*(2**n_modes)*rho_q[i,j]/(np.pi**n_modes * np.sqrt(det_sigma))*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,j])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,j]))[0,0]
     for a in range(len(W_PMS)):
         if GCS.prob_t[a,time_index] == 0.0:
             W_PMS[a] = np.zeros((len(r_tilde_array), len(r_tilde_array)))
