@@ -210,3 +210,6 @@ __marimo__/
 # Commit milestone snapshots under a different name (e.g. *_v1.nb, *_snapshot.nb).
 Mathematica_Analytical.nb
 Claude_GCS.nb
+
+# macOS
+.DS_Store
