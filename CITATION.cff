@@ -3,7 +3,7 @@ message: "If you use gbcs, please cite the paper below."
 title: "gbcs: Gaussian-branched cat states"
 type: software
 license: MIT
-repository-code: "https://github.com/LorenzoBracciniUCL/GCS"
+repository-code: "https://github.com/LorenzoBracciniUCL/GBCS"
 authors:
   - family-names: Braccini
     given-names: Lorenzo

@@ -16,7 +16,7 @@ It covers:
 ## Installation
 
 ```bash
-pip install git+https://github.com/LorenzoBracciniUCL/GCS.git
+pip install git+https://github.com/LorenzoBracciniUCL/GBCS.git
 ```
 
 To run the tutorials and tests, install from a clone of this repository:

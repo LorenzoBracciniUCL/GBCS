@@ -22,7 +22,7 @@ notebooks = ["jupyter>=1.0", "nbconvert>=7.0", "qutip>=5.0"]
 
 [project.urls]
 Paper = "https://arxiv.org/abs/2510.01156"
-Repository = "https://github.com/LorenzoBracciniUCL/GCS"
+Repository = "https://github.com/LorenzoBracciniUCL/GBCS"
 
 [tool.setuptools.packages.find]
 where = ["src"]
