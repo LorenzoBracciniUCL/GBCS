@@ -29,7 +29,7 @@ def Omega_N(n_modes):
 
 def U_N(n_modes):
     """Transformation from ladder to canonical, \alpha = U r"""
-    u_n = np.zeros((2*n_modes, 2*n_modes), dtype =np.complex64)
+    u_n = np.zeros((2*n_modes, 2*n_modes), dtype =np.complex128)
     for i in range(n_modes):
         u_n[int(2*i), int(2*i)] = 1
         u_n[int(2*i+1), int(2*i)] = 1

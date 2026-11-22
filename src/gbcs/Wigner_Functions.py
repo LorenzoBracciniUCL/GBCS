@@ -17,6 +17,8 @@ def Root_Det(sigma):
     Re sigma > 0 every eigenvalue lies in the right half-plane, where the product of their principal roots is that
     branch; np.sqrt(np.linalg.det(sigma)) can be off by a sign once there are two modes or more.
     """
+    if not np.iscomplexobj(sigma) or not np.any(np.imag(sigma)):
+        return np.sqrt(np.linalg.det(np.real(sigma)))
     return np.prod(np.sqrt(np.linalg.eigvals(sigma)))
 
 def Create_XX_PP(GCS, sigma_para, steps):

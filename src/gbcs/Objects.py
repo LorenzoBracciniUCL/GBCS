@@ -361,37 +361,28 @@ class Quantum_State:
 
         self.Start_Dynamics_Noise()
         
+        d = Decoherence.d_vec
+        Gamma_z = Decoherence.Gamma_z
+
         if Hamiltonian.type[0] == 'Constant':
             if Hamiltonian.type[1] == 'Gaussian':
                 if self.type == 'GCS':
-                    N2 = 2**self.N_qubits
-                    self.sigma_JK_t = np.zeros((len(t_array), N2, N2, 2*self.n_modes, 2*self.n_modes), dtype=complex)
-                    self.r_JK_t     = np.zeros((len(t_array), N2, N2, 2*self.n_modes, 1), dtype=complex)
-                    for j in range(N2):
-                        for k in range(j, N2):
-                            r_jk, sigma_jk = Gaussian.Open_Numerical(self.n_modes, self.r_0[j,k], self.sigma_0[j,k],
-                                                                      Hamiltonian.H_array[0], Hamiltonian.r_array[0], E, D, t_array)
-                            self.r_JK_t[:,j,k]     = r_jk
-                            self.sigma_JK_t[:,j,k] = sigma_jk
-                            self.r_JK_t[:,k,j]     = np.conjugate(r_jk)
-                            self.sigma_JK_t[:,k,j] = np.conjugate(sigma_jk)
-                    self.C_JK_t   = np.zeros((len(t_array), N2, N2))
-                    self.phi_JK_t = np.zeros((len(t_array), N2, N2))
-                    self.rho_q_t  = np.tile(self.rho_q_0, (len(t_array), 1, 1))
-                    self.type = 'GCS'
+                    # No coupling, but per-branch states and possibly qubit dephasing: the general linear solver with
+                    # zero couplings covers every term.
+                    self.Open_Dynamics_Uncoupled(Hamiltonian, E, D, d, Gamma_z, t_array)
                 else:
+                    # The drive d enters the first moments as Omega d, i.e. as the force r_m -> r_m - d.
                     self.r_t, self.sigma_t = Gaussian.Open_Numerical(self.n_modes, self.r_0, self.sigma_0,
-                                                                      Hamiltonian.H_array[0], Hamiltonian.r_array[0], E, D, t_array)
+                                                                      Hamiltonian.H_array[0], Hamiltonian.r_array[0] - d, E, D, t_array)
 
             elif Hamiltonian.type[1] == 'Force':
-                if E.all() == 0.0:
+                if not (np.any(E) or np.any(d) or np.any(Gamma_z)):
+                    # Integral form of Tab. 5, valid for symmetric noise (E = 0) without drive or dephasing.
                     self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Open_Operator_Force.Dynamics_Symetric_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0,  Hamiltonian.H_array[0], Hamiltonian.r_array, Hamiltonian.H_q_0_array, D, t_array)
                     self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
                     self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
                 else:
-                    self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t  = Open_Operator_Force.Dynamics_General_Numerical(self.N_qubits, self.n_modes, self.r_0, self.sigma_0,  Hamiltonian.H_array[0], Hamiltonian.r_array, Hamiltonian.H_q_0_array, E, D, t_array)
-                    self.r_JK_0_t =  - self.C_JK_t + 1j*self.phi_JK_t
-                    self.rho_q_t =  np.exp(- self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
+                    self.Open_Dynamics_Uncoupled(Hamiltonian, E, D, d, Gamma_z, t_array)
                 self.type = 'GCS'
 
             elif Hamiltonian.type[1] == 'General':
@@ -420,6 +411,25 @@ class Quantum_State:
                 self.type = 'GCS'
 
         return
+
+    def Open_Dynamics_Uncoupled(self, Hamiltonian, E, D, d, Gamma_z, t_array):
+        """
+        Open dynamics of a Hamiltonian without quadratic couplings (type 'Gaussian' or 'Force') through the linear
+        solver of the general case, with H_q = 0: this one handles E, the drive d and qubit dephasing exactly.
+        """
+        zero_H = np.zeros_like(Hamiltonian.H_array[0])
+        zero_r = np.zeros_like(Hamiltonian.r_array[0])
+        H_array = [Hamiltonian.H_array[0]] + [zero_H]*self.N_qubits
+        r_array = list(Hamiltonian.r_array) + [zero_r]*(self.N_qubits + 1 - len(Hamiltonian.r_array))
+        H_q_0 = np.ravel(Hamiltonian.H_q_0_array)
+        if len(H_q_0) != self.N_qubits:
+            H_q_0 = np.zeros(self.N_qubits)
+        self.sigma_JK_t, self.r_JK_t, self.C_JK_t, self.phi_JK_t = Riccati_Linear.Dynamics_Linear(
+            self.N_qubits, self.n_modes, self.r_0, self.sigma_0, H_array, r_array, H_q_0, self.rho_q_0, t_array,
+            E=E, D=D, d=d, Gamma_z=Gamma_z)
+        self.r_JK_0_t = -self.C_JK_t + 1j*self.phi_JK_t
+        self.rho_q_t = np.exp(-self.C_JK_t + 1j*self.phi_JK_t)*self.rho_q_0
+        self.type = 'GCS'
 
     def Open_Dynamics_Analytical(self, Hamiltonian, Symplectic, t_array):
         self.t_array = t_array
