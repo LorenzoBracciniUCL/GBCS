@@ -25,6 +25,7 @@ from . import Measurements
 from . import Plots_Functions
 from . import Wigner_Functions
 from . import Operations
+from . import Perturbation_Theory
 
 
 class Hamiltonian:
@@ -60,6 +61,24 @@ class Hamiltonian:
             self.type = ['Constant','General']
             print('This is a time independent operator-valued general Hamiltonian')
         return 
+
+    def Initialize_Qudit_Hamiltonians(self, H_levels, r_levels, H_0_levels):
+        """
+        One N-level DV system instead of a qubit register: H = sum_j (1/2 r^T H_j r - r_j^T r + 1/2 H^0_j) |j><j|.
+        Only Quantum_State.Perturbed_Dynamics uses this form.
+
+        H_levels    N matrices (2n x 2n), one per level
+        r_levels    N force vectors (2n x 1)
+        H_0_levels  N energies H^0_j
+        """
+        if not (len(H_levels) == len(r_levels) == len(np.ravel(H_0_levels))):
+            raise ValueError('H_levels, r_levels and H_0_levels need one entry per level')
+        self.H_levels = [np.asarray(H) for H in H_levels]
+        self.r_levels = [np.asarray(r).reshape(-1, 1) for r in r_levels]
+        self.H_0_levels = np.ravel(H_0_levels)
+        self.N_levels = len(H_levels)
+        self.type = ['Constant', 'Qudit']
+        return
 
     def Initialize_Time_Dep_Hamiltonian(self, H_array_func, r_array_func, H_q_0_array_func, t_array):
         """
@@ -136,7 +155,7 @@ class Decoherence:
         self.N_qubits = N_qubits
         self.n_modes = n_modes
         self.d_vec = d_vec if d_vec is not None else np.zeros((2*n_modes, 1))
-        self.Gamma_z = Gamma_z if Gamma_z is not None else np.zeros(N_qubits)
+        self.Gamma_z = Gamma_z if Gamma_z is not None else np.zeros(N_qubits if N_qubits is not None else 0)
 
         if basis == 'Canonical':
             self.E_mat, self.D_mat = Gaussian.Get_Decoherence_Rates(n_modes, B_matrix)
@@ -450,6 +469,76 @@ class Quantum_State:
             self.type = 'GCS'
 
         return
+
+    def Perturbed_Dynamics(self, Hamiltonian, Perturbation, t_array, Decoherence=None, order=1,
+                           method='quadrature', n_samples=1000, seed=None, store_times=None, max_paths=2_000_000):
+        """
+        Dyson series in the DV-only terms of Perturbation (T1, ladder decay, DV Hamiltonian) around the
+        operator-valued Gaussian dynamics of Hamiltonian (constant), with Decoherence if given.
+        See gbcs.Perturbation_Theory for the method.
+
+        order       the series is cut after this many jumps
+        method      'quadrature' (jump times on t_array, trapezoid rule) or 'monte_carlo' (n_samples per order)
+        store_times grid indices at which the Gaussian components of orders >= 1 are kept for Wigner functions
+                    (default: the last one)
+
+        Sets the order-0 GBCS in the usual attributes (sigma_JK_t, r_JK_t, C_JK_t, phi_JK_t, r_JK_0_t, rho_q_t), so
+        every existing method still describes that part consistently, and adds:
+          rho_q_t_total            QRDM to the given order
+          rho_q_t_orders           QRDM contribution of each order, (order + 1, T, N, N)
+          rho_q_t_stderr           its standard error (Monte Carlo; zeros for quadrature)
+          first_moments_t          Tr[r_hat rho_jk], all orders
+          second_moments_t         Tr[sym(r_hat r_hat^T) rho_jk], all orders
+          perturbation_components  {time index: Gaussian components of orders >= 1}
+          perturbation_last_order  largest |rho_jk| of the last order, to judge the cut
+        Returns the Perturbation_Theory.Perturbation_Result.
+        """
+        N = Perturbation.N_levels
+        E = D = d = None
+        if Decoherence is not None:
+            E, D, d = Decoherence.E_mat, Decoherence.D_mat, Decoherence.d_vec
+        H_levels, r_levels, H_0_levels, dephasing = Perturbation_Theory.Level_Structure(Hamiltonian, Decoherence, N)
+
+        result = Perturbation_Theory.Perturbation_Dynamics(
+            self.n_modes, self.r_0, self.sigma_0, self.rho_q_0, H_levels, r_levels, H_0_levels, dephasing,
+            Perturbation, t_array, E=E, D=D, d=d, order=order, method=method, n_samples=n_samples,
+            seed=seed, store_times=store_times, max_paths=max_paths)
+
+        self.t_array = result.t_array
+        self.N_levels = N
+        self.sigma_JK_t, self.r_JK_t = result.sigma_JK_t, result.r_JK_t
+        self.C_JK_t, self.phi_JK_t = result.C_JK_t, result.phi_JK_t
+        self.r_JK_0_t = -self.C_JK_t + 1j*self.phi_JK_t
+        self.rho_q_t = result.rho_q_t
+        self.rho_q_t_total = result.rho_q_t_total
+        self.rho_q_t_orders = result.rho_q_t_orders
+        self.rho_q_t_stderr = result.rho_q_t_stderr
+        self.first_moments_t = result.first_moments_t
+        self.second_moments_t = result.second_moments_t
+        self.perturbation_components = result.components
+        self.perturbation_last_order = result.last_order_size
+        self.type = 'GCS'
+        return result
+
+    def Wigner_Function_Perturbation(self, steps, time_index, mode_number, sigma_para, part='all', projector=None):
+        """
+        Wigner function of the orders >= 1 of Perturbed_Dynamics at time_index, which must be one of its
+        store_times, on the grid of the other Wigner methods.  It is the W_g of Plot_Wigner_Function_GCS_Weighted.
+
+        part      'all', 'diagonal' (the modes' reduced state) or 'off_diagonal' (interference term)
+        projector (N, N) DV operator Pi; gives Tr_q[Pi W] instead of part, e.g. for a measurement outcome
+
+        Returns W, x_array, p_array.
+        """
+        time_index = int(time_index) % len(self.t_array)
+        if time_index not in self.perturbation_components:
+            stored = sorted(self.perturbation_components)
+            raise ValueError(f'no components stored at time index {time_index} (stored: {stored}); '
+                             'pass it in store_times to Perturbed_Dynamics')
+        r_tilde_array, x_array, p_array, _, _ = Wigner_Functions.Create_r_tilde_array(self, sigma_para, mode_number, steps)
+        W = Perturbation_Theory.Wigner_Components(self.perturbation_components[time_index], r_tilde_array,
+                                                  self.n_modes, part=part, projector=projector)
+        return W, x_array, p_array
 
 ################################## Operations ##################################
 

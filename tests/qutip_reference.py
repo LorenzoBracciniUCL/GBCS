@@ -183,3 +183,72 @@ def Reference_Dynamics(N_qubits, n_modes, cutoff, mode_states, H_array, r_array,
                         sigma_JK_t[t, j, k, a, b] = sigma_JK_t[t, j, k, b, a] = value
 
     return rho_q_t, r_JK_t, sigma_JK_t, edge
+
+
+################################## Any DV levels, with DV-only terms ##################################
+
+def Reference_Dynamics_Levels(N_levels, n_modes, cutoff, mode_states, H_levels, r_levels, H_0_levels, rho_q_0, t_array,
+                              B=None, d=None, H_dv=None, dv_jumps=(), rtol=1e-9, atol=1e-11):
+    """
+    Like Reference_Dynamics for one DV system of N_levels levels, with each level's H_j, r_j and H^0_j given
+    directly, plus the DV-only terms of the perturbation theory: -i[H_dv, rho] and L rho L^dag - 1/2 {L^dag L, rho}
+    for each L in dv_jumps (N_levels x N_levels matrices, identity on the modes).
+
+    Returns the unnormalised branch moments of the full state
+        rho_q_t (T, N, N)               Tr[rho_jk]
+        first_t (T, N, N, 2n)           Tr[r_hat rho_jk]
+        second_t (T, N, N, 2n, 2n)      Tr[sym(r_hat r_hat^T) rho_jk]
+    and the largest population on the last Fock level of any mode.
+    """
+    dim = 2*n_modes
+    r_ops = Mode_Operators(n_modes, cutoff)
+    modes_identity = qutip.tensor(*[qutip.qeye(cutoff)]*n_modes)
+    dv_identity = qutip.qeye(N_levels)
+    projectors = [[qutip.Qobj(np.outer(np.eye(N_levels)[j], np.eye(N_levels)[k])) for k in range(N_levels)]
+                  for j in range(N_levels)]
+
+    H_total = 0
+    for j in range(N_levels):
+        r_j = np.ravel(r_levels[j])
+        block = 0.5*np.real(H_0_levels[j])*modes_identity
+        for a in range(dim):
+            block -= r_j[a]*r_ops[a]
+            for b in range(dim):
+                block += 0.5*H_levels[j][a, b]*r_ops[a]*r_ops[b]
+        H_total += qutip.tensor(block, projectors[j][j])
+    if d is not None:
+        H_total += qutip.tensor(sum(np.ravel(d)[a]*r_ops[a] for a in range(dim)), dv_identity)
+    if H_dv is not None:
+        H_total += qutip.tensor(modes_identity, qutip.Qobj(np.asarray(H_dv)))
+
+    c_ops = [qutip.tensor(modes_identity, qutip.Qobj(np.asarray(L))) for L in dv_jumps]
+    if B is not None:
+        c_ops += [qutip.tensor(L, dv_identity) for L in Lindblad_Operators(B, r_ops)]
+
+    states = [Single_Mode_State(cutoff, *state) for state in mode_states]
+    states = [state if state.isoper else qutip.ket2dm(state) for state in states]
+    rho_0 = qutip.tensor(*states, qutip.Qobj(np.asarray(rho_q_0)))
+    result = qutip.mesolve(H_total, rho_0, t_array, c_ops=c_ops,
+                           options={'store_states': True, 'rtol': rtol, 'atol': atol, 'nsteps': 10**7,
+                                    'progress_bar': False})
+
+    T = len(t_array)
+    D_modes = cutoff**n_modes
+    rho_q_t = np.zeros((T, N_levels, N_levels), dtype=complex)
+    first_t = np.zeros((T, N_levels, N_levels, dim), dtype=complex)
+    second_t = np.zeros((T, N_levels, N_levels, dim, dim), dtype=complex)
+    r_mats = [op.full() for op in r_ops]
+    sym_mats = [[0.5*(r_mats[a] @ r_mats[b] + r_mats[b] @ r_mats[a]) for b in range(dim)] for a in range(dim)]
+    edge = 0.0
+    for t, state in enumerate(result.states):
+        branch = state.full().reshape(D_modes, N_levels, D_modes, N_levels).transpose(1, 3, 0, 2)
+        rho_q_t[t] = np.trace(branch, axis1=2, axis2=3)
+        diagonal = np.real(np.einsum('jjaa->a', branch)).reshape([cutoff]*n_modes)
+        for m in range(n_modes):
+            marginal = np.sum(diagonal, axis=tuple(i for i in range(n_modes) if i != m))
+            edge = max(edge, marginal[-1])
+        for a in range(dim):
+            first_t[t, :, :, a] = np.einsum('ba,jkab->jk', r_mats[a], branch)
+            for b in range(dim):
+                second_t[t, :, :, a, b] = np.einsum('ba,jkab->jk', sym_mats[a][b], branch)
+    return rho_q_t, first_t, second_t, edge
