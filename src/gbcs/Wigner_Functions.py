@@ -115,7 +115,7 @@ def Wigner_Sum_Diagonal(GCS, time_index, r_tilde_array):
         sigma_inv = np.linalg.inv(sigma_JK[i,i])
         for m in range(len(r_tilde_array)):
             for n in range(len(r_tilde_array)):
-                W_Diag[m,n] += (2**n_modes)*rho_q[i,i]/(np.pi**n_modes * root_det)*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,i])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,i]))[0,0]
+                W_Diag[m,n] += np.real((2**n_modes)*rho_q[i,i]/(np.pi**n_modes * root_det)*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,i])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,i]))[0,0])
     return W_Diag
 
 def Wigner_Gaussian(GCS, time_index, r_tilde_array):
@@ -129,7 +129,7 @@ def Wigner_Gaussian(GCS, time_index, r_tilde_array):
     sigma_inv = np.linalg.inv(sigma)
     for m in range(len(r_tilde_array)):
         for n in range(len(r_tilde_array)):
-            W_Gausss[m,n] += (2**n_modes)/(np.pi**n_modes * root_det)*np.exp(-np.transpose(r_tilde_array[m,n] -r_first)@sigma_inv@(r_tilde_array[m,n] - r_first))[0,0]
+            W_Gausss[m,n] += np.real((2**n_modes)/(np.pi**n_modes * root_det)*np.exp(-np.transpose(r_tilde_array[m,n] -r_first)@sigma_inv@(r_tilde_array[m,n] - r_first))[0,0])
 
     return W_Gausss
 
