@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np 
 import matplotlib.pyplot as plt
 import math as math 
@@ -97,6 +99,10 @@ class Hamiltonian:
         else:
             self.type = ['Time','General']
 
+        if self.type[1] != 'Gaussian':
+            warnings.warn('the time-dependent solvers for operator-valued Hamiltonians (Unitary_Operator_Time_Dependent, '
+                          'Open_Operator_Time_Dependent) do not agree with the constant-Hamiltonian solvers and are '
+                          'not validated; do not rely on their results', RuntimeWarning, stacklevel=2)
         H_array_t = np.zeros((len(H_array_func), len(t_array), 2*self.n_modes, 2*self.n_modes))
         r_array_t = np.zeros((len(r_array_func), len(t_array), 2*self.n_modes, 1))
         H_q_0_array_t = np.zeros((len(H_q_0_array_func), len(t_array)))
@@ -601,41 +607,46 @@ class Quantum_State:
         return 
     
     def Mode_Measurament(self, type_measure, mode_number, axis_angle, efficency, r_measure_array):
-        """Compute a qubit measurament
-        If type == Ideal, parameter == index time 
         """
-        if type_measure[0] == 'Final':
-            if type_measure[1] == 'Heterodyne':
-                sigma_measure = Measurements.CM_Heterodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
-                self.Qubit_PMS, self.Prob_Dis = Measurements.Generadyne_Qubit_Post_Measurement_State(self.N_qubits, self.n_modes, self.sigma_JK_t[-1], sigma_measure, self.r_JK_t[-1], self.rho_q_t[-1], r_measure_array)
-            elif type_measure[1] == 'Homodyne':
-                sigma_measure = Measurements.CM_Homodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
-                self.Qubit_PMS, self.Prob_Dis = Measurements.Generadyne_Qubit_Post_Measurement_State(self.N_qubits, self.n_modes, self.sigma_JK_t[-1], sigma_measure, self.r_JK_t[-1], self.rho_q_t[-1], r_measure_array)
+        Noisy homodyne or heterodyne measurement of one mode, and the qubit state it leaves (Sec. VI).
 
+        type_measure    ['Final' or 'Time', 'Homodyne' or 'Heterodyne']
+        axis_angle      homodyne measures x cos(angle) + p sin(angle); unused for heterodyne
+        efficency       detection efficiency eta in (0, 1]
+        r_measure_array homodyne: the outcomes m, shape (K,); heterodyne: (x, p) pairs, shape (K, 2)
+
+        Sets Prob_Dis (K,), the outcome probabilities normalised over the given outcomes, and Qubit_PMS (2^N, 2^N, K),
+        with Qubit_PMS[:, :, k] / Prob_Dis[k] the qubit state after outcome k ('Time': Prob_Dis_t, Qubit_PMS_t).
+        """
+        if type_measure[1] == 'Homodyne':
+            sigma_measure = Measurements.CM_Homodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
+            outcomes = Measurements.Homodyne_Outcomes(self.n_modes, mode_number, axis_angle, r_measure_array)
+        elif type_measure[1] == 'Heterodyne':
+            sigma_measure = Measurements.CM_Heterodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
+            outcomes = Measurements.Heterodyne_Outcomes(self.n_modes, mode_number, r_measure_array)
+        else:
+            raise ValueError(f"type_measure[1] must be 'Homodyne' or 'Heterodyne', not {type_measure[1]!r}")
+
+        if type_measure[0] == 'Final':
+            self.Qubit_PMS, self.Prob_Dis = Measurements.Generadyne_Qubit_Post_Measurement_State(self.N_qubits, self.n_modes, self.sigma_JK_t[-1], sigma_measure, self.r_JK_t[-1], self.rho_q_t[-1], outcomes)
         elif type_measure[0] == 'Time':
-            if type_measure[1] == 'Heterodyne':
-                sigma_measure = Measurements.CM_Heterodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
-                self.Qubit_PMS_t, self.Prob_Dis_t = Measurements.Generadyne_Qubit_Post_Measurement_State_Time_Evolution(self.N_qubits, self.n_modes, self.sigma_JK_t, sigma_measure, self.r_JK_t, self.rho_q_t, r_measure_array, self.t_array)
-            elif type_measure[1] == 'Homodyne':
-                sigma_measure = Measurements.CM_Homodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
-                self.Qubit_PMS_t, self.Prob_Dis_t = Measurements.Generadyne_Qubit_Post_Measurement_State_Time_Evolution(self.N_qubits, self.n_modes, self.sigma_JK_t, sigma_measure, self.r_JK_t, self.rho_q_t, r_measure_array, self.t_array)
+            self.Qubit_PMS_t, self.Prob_Dis_t = Measurements.Generadyne_Qubit_Post_Measurement_State_Time_Evolution(self.N_qubits, self.n_modes, self.sigma_JK_t, sigma_measure, self.r_JK_t, self.rho_q_t, outcomes, self.t_array)
         else:
             raise ValueError(f"type_measure[0] must be 'Final' or 'Time', not {type_measure[0]!r}")
-        return 
-    
+        return
+
     def Homdyne_Mode_Measurament(self, type_measure, mode_number, axis_angle, quadrature, efficency, r_measure_array):
-        """Compute a qubit measurament
-        If type == Ideal, parameter == index time 
         """
-        if type_measure == 'Final':
-            sigma_measure = Measurements.CM_Heterodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
-            self.Qubit_PMS, self.Prob_Dis = Measurements.Homodyne_Qubit_Post_Measurement_State(self.N_qubits, self.n_modes, self.sigma_JK_t[-1], sigma_measure, self.r_JK_t[-1], self.rho_q_t[-1], r_measure_array, mode_number, quadrature)
-        elif type_measure == 'Time':
-            sigma_measure = Measurements.CM_Heterodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
-            self.Qubit_PMS_t, self.Prob_Dis_t = Measurements.Homodyne_Qubit_Post_Measurement_State_Time_Evolution(self.N_qubits, self.n_modes, self.sigma_JK_t, sigma_measure, self.r_JK_t, self.rho_q_t, r_measure_array, self.t_array, mode_number, quadrature)
-        else:
+        Homodyne of x (quadrature='Position') or p ('Momentum') of one mode; axis_angle is not used.
+        The same as Mode_Measurament([type_measure, 'Homodyne'], mode_number, 0 or pi/2, efficency, r_measure_array).
+        """
+        if quadrature not in ('Position', 'Momentum'):
+            raise ValueError(f"quadrature must be 'Position' or 'Momentum', not {quadrature!r}")
+        if type_measure not in ('Final', 'Time'):
             raise ValueError(f"type_measure must be 'Final' or 'Time', not {type_measure!r}")
-        return 
+        angle = 0.0 if quadrature == 'Position' else np.pi/2
+        self.Mode_Measurament([type_measure, 'Homodyne'], mode_number, angle, efficency, r_measure_array)
+        return
     
 ################################## Plot ################################## 
 

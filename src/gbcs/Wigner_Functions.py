@@ -10,6 +10,15 @@ from scipy.interpolate import interp1d
 from . import QIT_Functions
 from . import Gaussian
 
+
+def Root_Det(sigma):
+    """
+    sqrt(det sigma) on the branch continuous from positive-definite sigma.  For a complex off-diagonal sigma with
+    Re sigma > 0 every eigenvalue lies in the right half-plane, where the product of their principal roots is that
+    branch; np.sqrt(np.linalg.det(sigma)) can be off by a sign once there are two modes or more.
+    """
+    return np.prod(np.sqrt(np.linalg.eigvals(sigma)))
+
 def Create_XX_PP(GCS, sigma_para, steps):
 
     if hasattr(GCS, 'r_t') and isinstance(GCS.r_t, np.ndarray):
@@ -56,7 +65,7 @@ def Wigner_PMS_func(GCS, time_index, r_tilde_array):
     - Matrix of the Wigner function of diagonal 
     """
 
-    W_PMS = np.zeros((len(GCS.POVM_array), len(r_tilde_array), len(r_tilde_array)), dtype =np.complex64)
+    W_PMS = np.zeros((len(GCS.POVM_array), len(r_tilde_array), len(r_tilde_array)), dtype =np.complex128)
 
     sigma_JK = GCS.sigma_JK_t[time_index]
     r_JK = GCS.r_JK_t[time_index] 
@@ -66,17 +75,17 @@ def Wigner_PMS_func(GCS, time_index, r_tilde_array):
 
     for i in range(2**(N_qubits)):
         for j in range(2**(N_qubits)):
-            det_sigma = np.linalg.det(sigma_JK[i,j])
+            root_det = Root_Det(sigma_JK[i,j])
             sigma_inv = np.linalg.inv(sigma_JK[i,j])
             for m in range(len(r_tilde_array)):
                 for n in range(len(r_tilde_array)):
                     for a in range(len(W_PMS)):
-                        W_PMS[a,m,n] += GCS.POVM_array[a,i,j]*(2**n_modes)*rho_q[i,j]/(np.pi**n_modes * np.sqrt(det_sigma))*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,j])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,j]))[0,0]
+                        W_PMS[a,m,n] += GCS.POVM_array[a,j,i]*(2**n_modes)*rho_q[i,j]/(np.pi**n_modes * root_det)*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,j])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,j]))[0,0]
     for a in range(len(W_PMS)):
         if GCS.prob_t[a,time_index] == 0.0:
             W_PMS[a] = np.zeros((len(r_tilde_array), len(r_tilde_array)))
         else:
-            W_PMS[a] = W_PMS[a]*GCS.prob_t[a,time_index]
+            W_PMS[a] = W_PMS[a]/GCS.prob_t[a,time_index]
     return np.real(W_PMS)
 
 def Wigner_Sum_Diagonal(GCS, time_index, r_tilde_array):
@@ -100,11 +109,11 @@ def Wigner_Sum_Diagonal(GCS, time_index, r_tilde_array):
     W_Diag = np.zeros((len(r_tilde_array), len(r_tilde_array)))
 
     for i in range(2**(N_qubits)):
-        det_sigma = np.linalg.det(sigma_JK[i,i])
+        root_det = Root_Det(sigma_JK[i,i])
         sigma_inv = np.linalg.inv(sigma_JK[i,i])
         for m in range(len(r_tilde_array)):
             for n in range(len(r_tilde_array)):
-                W_Diag[m,n] += (2**n_modes)*rho_q[i,i]/(np.pi**n_modes * np.sqrt(det_sigma))*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,i])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,i]))[0,0]
+                W_Diag[m,n] += (2**n_modes)*rho_q[i,i]/(np.pi**n_modes * root_det)*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,i])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,i]))[0,0]
     return W_Diag
 
 def Wigner_Gaussian(GCS, time_index, r_tilde_array):
@@ -114,11 +123,11 @@ def Wigner_Gaussian(GCS, time_index, r_tilde_array):
 
     W_Gausss = np.zeros((len(r_tilde_array), len(r_tilde_array)))
 
-    det_sigma = np.linalg.det(sigma)
+    root_det = Root_Det(sigma)
     sigma_inv = np.linalg.inv(sigma)
     for m in range(len(r_tilde_array)):
         for n in range(len(r_tilde_array)):
-            W_Gausss[m,n] += (2**n_modes)/(np.pi**n_modes * np.sqrt(det_sigma))*np.exp(-np.transpose(r_tilde_array[m,n] -r_first)@sigma_inv@(r_tilde_array[m,n] - r_first))[0,0]
+            W_Gausss[m,n] += (2**n_modes)/(np.pi**n_modes * root_det)*np.exp(-np.transpose(r_tilde_array[m,n] -r_first)@sigma_inv@(r_tilde_array[m,n] - r_first))[0,0]
 
     return W_Gausss
 
@@ -191,9 +200,9 @@ def Wigner_Off_Diagonal(GCS, time_index, r_tilde_array):
 
     for j in range(2**N_qubits):
         for k in range(j + 1, 2**N_qubits):
-            det_sigma = np.linalg.det(sigma_JK[j, k])
+            root_det = Root_Det(sigma_JK[j, k])
             sigma_inv = np.linalg.inv(sigma_JK[j, k])
-            prefactor = (2**n_modes) * rho_q[j, k] / (np.pi**n_modes * np.sqrt(det_sigma))
+            prefactor = (2**n_modes) * rho_q[j, k] / (np.pi**n_modes * root_det)
             for m in range(steps):
                 for n in range(steps):
                     dr = r_tilde_array[m, n] - r_JK[j, k]
@@ -245,9 +254,9 @@ def Wigner_jk_func(GCS, time_index, r_tilde_array):
 
     for i in range(2**(N_qubits)):
         for j in range(2**(N_qubits)):
-            det_sigma = np.linalg.det(sigma_JK[i,j])
+            root_det = Root_Det(sigma_JK[i,j])
             sigma_inv = np.linalg.inv(sigma_JK[i,j])
             for m in range(len(r_tilde_array)):
                 for n in range(len(r_tilde_array)):
-                    W_jk[i,j,m,n] = (2**n_modes)*rho_q[i,j]/(np.pi**n_modes * np.sqrt(det_sigma))*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,j])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,j]))[0,0]
+                    W_jk[i,j,m,n] = (2**n_modes)*rho_q[i,j]/(np.pi**n_modes * root_det)*np.exp(-np.transpose(r_tilde_array[m,n] - r_JK[i,j])@sigma_inv@(r_tilde_array[m,n] - r_JK[i,j]))[0,0]
     return 
