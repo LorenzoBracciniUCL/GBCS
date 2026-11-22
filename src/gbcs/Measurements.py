@@ -7,7 +7,7 @@ from scipy import integrate as integ
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 
-import QIT_Functions as QIT_Functions 
+from . import QIT_Functions
 
 
 ########################################## Expectation Values ##########################################
@@ -124,7 +124,7 @@ def CM_Homodyne_Noisy_1Mode(n_modes, mode_number, axis_angle, efficency):
 
 def CM_Heterodyne_Noisy_1Mode(n_modes, mode_number, axis_angle, efficency):
     
-    efficency_angle = np.sqrt(np.arccos(efficency))
+    efficency_angle = np.arccos(np.sqrt(efficency))
 
     sigma_m = np.zeros((2*n_modes, 2*n_modes))
     heterodyne = (1  + 2*np.tan(efficency_angle)**2)*np.eye(2,2)
@@ -155,7 +155,6 @@ def Homodyne_Qubit_Post_Measurement_State(N_qubits, n_modes, sigma_jk, sigma_mea
                     det =(sigma_jk[i,j]+ sigma_measure)[2*mode_number+1,2*mode_number+1]
                 else:
                     pass
-                print(det)
                 P_jk[i,j,k] = rho_q[i,j]/(np.pi**(n_modes)*np.sqrt(det))*np.exp(-np.transpose(r_jk[i,j] - r_measure)@inv@(r_jk[i,j] - r_measure))[0,0]
         
         for i in range(2**N_qubits):

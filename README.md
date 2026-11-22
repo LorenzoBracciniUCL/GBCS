@@ -13,3 +13,21 @@ We provide the following Notebooks:
 - Exapmple_Open: examples of all possible Python implementations of Open Dynamcis
 - Example_Animation_Wigner: examples of plotting functions of the first moments, qubit resduced density matrix and Animation of Wigner function, both for the statistical mixture of Gaussian process and post-measurement states (with wigner negativities).
 - Exapmple_Paper: The two examples presented in the [paper](https://arxiv.org/abs/2510.01156): (a) Measurement-Based Entanglement between two qubits with a mediating resonator, and (b) a Stern-Gerlach Interferometer of a levitated mass. 
+
+## Installation
+
+The library is the Python package `gbcs` (Gaussian-branched cat states). From the root of this repository:
+
+```bash
+pip install -e .                      # the library
+pip install -e ".[test,notebooks]"    # plus pytest, QuTiP and Jupyter
+```
+
+Then, from any project or notebook:
+
+```python
+from gbcs import Quantum_State, Hamiltonian, Decoherence, Symplectic
+from gbcs import Gaussian, QIT_Functions
+```
+
+It runs on numpy 1.26 and 2.x. Run the tests with `pytest` from the repository root.

@@ -7,8 +7,8 @@ from scipy import integrate as integ
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 
-import QIT_Functions as QIT_Functions
-import Gaussian as Gaussian
+from . import QIT_Functions
+from . import Gaussian
 
 def Compute_r_J_func(J_labels,  r_array_func):
     """
@@ -71,7 +71,7 @@ def Compute_sigma_JK_Unitary_Gaussian_General_Numerical_Time_Dep(n_modes, sigma_
     t_span = (t_array[0], t_array[-1])
     
     # Solve the ODE system
-    sigma_jk_sol = solve_ivp(equation_dot_sigma_jk_Time_Dep, t_span, y0, t_eval=t_array, args=(H_J_func, H_K_func, n_modes))
+    sigma_jk_sol = solve_ivp(equation_dot_sigma_jk_Time_Dep, t_span, y0, t_eval=t_array, args=(H_J_func, H_K_func, n_modes), **Gaussian.ODE_KWARGS)
     
     # Extract solutions
     sigma_jk_t = sigma_jk_sol.y.T.reshape(-1, 2*n_modes, 2*n_modes)  # Reshape back to matrices
@@ -106,7 +106,7 @@ def Compute_R_JK_Unitary_Gaussian_General_Numerical_Time_Dep(n_modes,r_0, sigma_
     t_span = (t_array[0], t_array[-1])
     
     # Solve for r_jk
-    sol_r = solve_ivp(equation_dot_r_jk_Time_Dep, t_span, y0, t_eval=t_array, args=(sigma_JK_interp, H_J_func, H_K_func, r_J_func, r_K_func, n_modes))
+    sol_r = solve_ivp(equation_dot_r_jk_Time_Dep, t_span, y0, t_eval=t_array, args=(sigma_JK_interp, H_J_func, H_K_func, r_J_func, r_K_func, n_modes), **Gaussian.ODE_KWARGS)
     # Extract solutioon
     r_jk_sol = sol_r.y.T.reshape(-1, 2*n_modes, 1)  # Reshape back to vectors
    
@@ -146,7 +146,7 @@ def Compute_R_JK_0_Unitary_Gaussian_General_Numerical_Time_Dep(n_modes, r_JK_sol
     
     # Solve for r_jk
     sol_r_0 = solve_ivp(equation_dot_r_jk_0_Time_Dep, t_span, y0, t_eval=t_array, 
-                        args=(sigma_JK_interp,r_JK_interp, H_J_func, H_K_func, r_J_func, r_K_func, J_labels, K_labels, H_q_0_array_func, n_modes))
+                        args=(sigma_JK_interp,r_JK_interp, H_J_func, H_K_func, r_J_func, r_K_func, J_labels, K_labels, H_q_0_array_func, n_modes), **Gaussian.ODE_KWARGS)
     # Extract solutioon
     r_0_jk_sol = sol_r_0.y.T # Reshape back to vectors
       

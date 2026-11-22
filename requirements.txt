@@ -1,0 +1,12 @@
+# Environment the notebooks were produced with.  The library itself runs on numpy 1.26 and 2.x;
+# its dependencies are declared in pyproject.toml, so `pip install -e .[test,notebooks]` is enough.
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+# notebooks only
+jupyter>=1.0
+nbconvert>=7.0
+# tests only
+pytest>=7.0
+# notebooks and tests only: independent reference for Riccati_Linear, the tests skip without it
+qutip>=5.0
