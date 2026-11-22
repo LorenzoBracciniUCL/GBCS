@@ -213,3 +213,8 @@ Claude_GCS.nb
 
 # macOS
 .DS_Store
+
+# Local working notes, not part of the published library
+.claude/
+Claude.md
+docs/

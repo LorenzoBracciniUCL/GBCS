@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use gbcs, please cite the paper below."
+title: "gbcs: Gaussian-branched cat states"
+type: software
+license: MIT
+repository-code: "https://github.com/LorenzoBracciniUCL/GCS"
+authors:
+  - family-names: Braccini
+    given-names: Lorenzo
+preferred-citation:
+  type: article
+  title: "Superpositions of Quantum Gaussian Processes"
+  authors:
+    - family-names: Braccini
+      given-names: Lorenzo
+    - family-names: Bose
+      given-names: Sougato
+    - family-names: Serafini
+      given-names: Alessio
+  year: 2025
+  identifiers:
+    - type: other
+      value: "arXiv:2510.01156"
+  url: "https://arxiv.org/abs/2510.01156"
