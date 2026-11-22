@@ -156,7 +156,6 @@ def Compute_Sigma_Open_Gaussian_Numerical_not_working(n_modes, sigma_0, H_m, E, 
         additional_term  = quad_vec(Integrand, 0, t_array[i],epsabs=1e-20)
         
         sigma_t[i] = S_tau@sigma_0@np.transpose(S_tau) + additional_term[0].reshape((2*n_modes, 2*n_modes))
-        print(additional_term[0].reshape((2*n_modes, 2*n_modes)))
 
     return sigma_t
 

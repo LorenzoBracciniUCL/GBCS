@@ -53,14 +53,11 @@ class Hamiltonian:
             
             if len(r_array) == 1:
                 self.type = ['Constant','Gaussian']
-                print('This is a time independent gaussian Hamiltonian')
             else:
                 self.type = ['Constant','Force']           
-                print('This is a time independent operator-valued force Hamiltonian')
         else:
             self.type = ['Constant','General']
-            print('This is a time independent operator-valued general Hamiltonian')
-        return 
+        return
 
     def Initialize_Qudit_Hamiltonians(self, H_levels, r_levels, H_0_levels):
         """
@@ -95,13 +92,10 @@ class Hamiltonian:
             
             if len(r_array_func) == 1:
                 self.type = ['Time','Gaussian']
-                print('This is a time dependent gaussian Hamiltonian')
             else:
                 self.type = ['Time','Force']    
-                print('This is a time dependent operator-valued force Hamiltonian')
         else:
             self.type = ['Time','General']
-            print('This is a time dependent operator-valued general Hamiltonian')
 
         H_array_t = np.zeros((len(H_array_func), len(t_array), 2*self.n_modes, 2*self.n_modes))
         r_array_t = np.zeros((len(r_array_func), len(t_array), 2*self.n_modes, 1))
@@ -165,7 +159,7 @@ class Decoherence:
             self.E_mat, self.D_mat = Gaussian.Get_Decoherence_Rates(n_modes,  U_N.T@B_matrix@U_N)
 
         else:
-            print('Input Valid Basis NAme: Canonical or Ladder')
+            raise ValueError(f"basis must be 'Canonical' or 'Ladder', not {basis!r}")
 
 class Quantum_State:
 
@@ -179,7 +173,6 @@ class Quantum_State:
 
     def Initialize_Gaussian_State(self, r_0, sigma_0,  rho_q_0):
 
-        print('Initializing a Gaussian State')
 
         self.sigma_0 = sigma_0.astype(complex)
         self.r_0 = r_0.astype(complex)
@@ -198,7 +191,6 @@ class Quantum_State:
         r_JK_0     : (2^N, 2^N, 2n, 1)   — per-branch first moments
         rho_q_0    : (2^N, 2^N)           — per-branch QRDM elements
         """
-        print('Initializing a GCS')
 
         self.sigma_0 = sigma_JK_0.astype(complex)
         self.r_0 = r_JK_0.astype(complex)
@@ -382,7 +374,6 @@ class Quantum_State:
                     self.rho_q_t  = np.tile(self.rho_q_0, (len(t_array), 1, 1))
                     self.type = 'GCS'
                 else:
-                    print('Computing the Gaussian Time-Indipendent Dynamics of a Gaussian State')
                     self.r_t, self.sigma_t = Gaussian.Open_Numerical(self.n_modes, self.r_0, self.sigma_0,
                                                                       Hamiltonian.H_array[0], Hamiltonian.r_array[0], E, D, t_array)
 
@@ -449,7 +440,6 @@ class Quantum_State:
                     self.rho_q_t  = np.tile(self.rho_q_0, (len(t_array), 1, 1))
                     self.type = 'GCS'
                 else:
-                    print('Computing the Gaussian Time-Indipendent Dynamics of a Gaussian State Semi-Analytically')
                     self.r_t, self.sigma_t = Gaussian.Unitary_Analytical(self.n_modes, self.r_0, self.sigma_0,
                                                                           Symplectic.symplectic_transformation,
                                                                           Hamiltonian.H_array[0], Hamiltonian.r_array[0], t_array)
@@ -581,10 +571,9 @@ class Quantum_State:
         if type_exp == 'Final':
             self.exp = Measurements.Qubit_Expecation_Value(operator, self.rho_q_t[-1])
         elif type_exp == 'Time':
-            print('hi')
             self.exp_t = Measurements.Qubit_Expecation_Value_Time_Evolution(operator, self.rho_q_t, self.t_array)
         else:
-            print('Input Type')
+            raise ValueError(f"type_exp must be 'Final' or 'Time', not {type_exp!r}")
         return 
 
     def Qubit_Ideal_Measurament(self, operator, type_measure):
@@ -599,7 +588,7 @@ class Quantum_State:
         elif type_measure == 'Time':
             self.outcomes, self.prob_t, self.POVM_array, self.rho_q_t_PMS_array =  Measurements.Qubit_Ideal_Measurament_Time_Evolution(self.N_qubits, operator,  self.rho_q_t,self.t_array)
         else:
-            print('Input Type')
+            raise ValueError(f"type_measure must be 'Final' or 'Time', not {type_measure!r}")
         return 
     
     def Negativity_Qubit(self, type_nega):
@@ -608,14 +597,13 @@ class Quantum_State:
         elif type_nega == 'Time':
             self.nega_t, self.witness_matrix_t = Measurements.Negativity_Qubits_Time(self.rho_q_t, self.t_array)
         else:
-            print('Input Type')
+            raise ValueError(f"type_nega must be 'Final' or 'Time', not {type_nega!r}")
         return 
     
     def Mode_Measurament(self, type_measure, mode_number, axis_angle, efficency, r_measure_array):
         """Compute a qubit measurament
         If type == Ideal, parameter == index time 
         """
-        print(type_measure, 'Measurement')
         if type_measure[0] == 'Final':
             if type_measure[1] == 'Heterodyne':
                 sigma_measure = Measurements.CM_Heterodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
@@ -632,14 +620,13 @@ class Quantum_State:
                 sigma_measure = Measurements.CM_Homodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
                 self.Qubit_PMS_t, self.Prob_Dis_t = Measurements.Generadyne_Qubit_Post_Measurement_State_Time_Evolution(self.N_qubits, self.n_modes, self.sigma_JK_t, sigma_measure, self.r_JK_t, self.rho_q_t, r_measure_array, self.t_array)
         else:
-            print('Input Type')
+            raise ValueError(f"type_measure[0] must be 'Final' or 'Time', not {type_measure[0]!r}")
         return 
     
     def Homdyne_Mode_Measurament(self, type_measure, mode_number, axis_angle, quadrature, efficency, r_measure_array):
         """Compute a qubit measurament
         If type == Ideal, parameter == index time 
         """
-        print(type_measure, 'Measurement')
         if type_measure == 'Final':
             sigma_measure = Measurements.CM_Heterodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
             self.Qubit_PMS, self.Prob_Dis = Measurements.Homodyne_Qubit_Post_Measurement_State(self.N_qubits, self.n_modes, self.sigma_JK_t[-1], sigma_measure, self.r_JK_t[-1], self.rho_q_t[-1], r_measure_array, mode_number, quadrature)
@@ -647,7 +634,7 @@ class Quantum_State:
             sigma_measure = Measurements.CM_Heterodyne_Noisy_1Mode(self.n_modes, mode_number, axis_angle, efficency)
             self.Qubit_PMS_t, self.Prob_Dis_t = Measurements.Homodyne_Qubit_Post_Measurement_State_Time_Evolution(self.N_qubits, self.n_modes, self.sigma_JK_t, sigma_measure, self.r_JK_t, self.rho_q_t, r_measure_array, self.t_array, mode_number, quadrature)
         else:
-            print('Input Type')
+            raise ValueError(f"type_measure must be 'Final' or 'Time', not {type_measure!r}")
         return 
     
 ################################## Plot ################################## 
@@ -818,7 +805,6 @@ class Quantum_State:
         r_tilde_array, x_array, p_array, XX, PP = Wigner_Functions.Create_r_tilde_array(self,sigma_para, mode_number, steps)
         self.wigner_PMS_t = Wigner_Functions.Wigner_t_PMS(self, r_tilde_array)
         bar_limits = [-np.max(self.wigner_PMS_t), np.max(self.wigner_PMS_t)]
-        print(np.shape(self.wigner_PMS_t))
         fig = Plots_Functions.Animate_Fringes(self.wigner_PMS_t,  x_array, p_array, bar_limits, array_tick, n_frames, title, save)
         return
     
